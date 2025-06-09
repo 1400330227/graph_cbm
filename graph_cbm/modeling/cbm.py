@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Tuple
 import torch
 from torch import nn, Tensor
 
-from graph_cbm.modeling.generalized_rcnn.generalized_rcnn import GeneralizedRCNN
+from graph_cbm.generalized_rcnn import GeneralizedRCNN
 from graph_cbm.modeling.graph import Graph
 
 

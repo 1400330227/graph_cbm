@@ -8,7 +8,7 @@ from . import det_utils
 from . import boxes as box_ops
 
 
-def fastrcnn_loss(class_logits, box_regression, labels, regression_targets):
+def fasterrcnn_loss(class_logits, box_regression, labels, regression_targets):
     # type: (Tensor, Tensor, List[Tensor], List[Tensor]) -> Tuple[Tensor, Tensor]
     """
     Computes the loss for Faster R-CNN.
@@ -36,7 +36,7 @@ def fastrcnn_loss(class_logits, box_regression, labels, regression_targets):
     # 返回标签类别大于0的索引
     # sampled_pos_inds_subset = torch.nonzero(torch.gt(labels, 0)).squeeze(1)
     sampled_pos_inds_subset = torch.where(torch.gt(labels, 0))[0]
-
+    
     # 返回标签类别大于0位置的类别信息
     labels_pos = labels[sampled_pos_inds_subset]
 
@@ -56,7 +56,7 @@ def fastrcnn_loss(class_logits, box_regression, labels, regression_targets):
     return classification_loss, box_loss
 
 
-class RoIHeads(torch.nn.Module):
+class BoxHead(torch.nn.Module):
     __annotations__ = {
         'box_coder': det_utils.BoxCoder,
         'proposal_matcher': det_utils.Matcher,
@@ -75,7 +75,7 @@ class RoIHeads(torch.nn.Module):
                  score_thresh,        # default: 0.05
                  nms_thresh,          # default: 0.5
                  detection_per_img):  # default: 100
-        super(RoIHeads, self).__init__()
+        super(BoxHead, self).__init__()
 
         self.box_similarity = box_ops.box_iou
         # assign ground-truth boxes for each proposal
@@ -390,7 +390,7 @@ class RoIHeads(torch.nn.Module):
         losses = {}
         if self.training:
             assert labels is not None and regression_targets is not None
-            loss_classifier, loss_box_reg = fastrcnn_loss(
+            loss_classifier, loss_box_reg = fasterrcnn_loss(
                 class_logits, box_regression, labels, regression_targets)
             losses = {
                 "loss_classifier": loss_classifier,

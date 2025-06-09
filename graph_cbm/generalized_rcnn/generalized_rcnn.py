@@ -7,7 +7,7 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 from torchvision.ops import MultiScaleRoIAlign
 
-from .roi_head import RoIHeads
+from .box_head import BoxHead
 from .transform import GeneralizedRCNNTransform
 from .rpn_function import AnchorsGenerator, RPNHead, RegionProposalNetwork
 
@@ -336,7 +336,7 @@ class FasterRCNN(FasterRCNNBase):
                 num_classes)
 
         # 将roi pooling, box_head以及box_predictor结合在一起
-        roi_heads = RoIHeads(
+        roi_heads = BoxHead(
             # box
             box_roi_pool, box_head, box_predictor,
             box_fg_iou_thresh, box_bg_iou_thresh,  # 0.5  0.5
