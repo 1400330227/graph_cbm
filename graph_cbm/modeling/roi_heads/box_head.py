@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Optional, List, Dict, Tuple
 
 import torch
@@ -26,23 +27,19 @@ def fasterrcnn_loss(class_logits, box_regression, labels, regression_targets):
 
 
 class BoxHead(torch.nn.Module):
-    __annotations__ = {
-        'box_coder': det_utils.BoxCoder,
-        'proposal_matcher': det_utils.Matcher,
-        'fg_bg_sampler': det_utils.BalancedPositiveNegativeSampler,
-    }
-
     def __init__(
             self,
             box_roi_pool,  # Multi-scale RoIAlign pooling
-            box_head,  # TwoMLPHead
+            feature_extractor,  # TwoMLPHead
             box_predictor,  # FastRCNNPredictor
             fg_iou_thresh, bg_iou_thresh,  # default: 0.5, 0.5
             batch_size_per_image, positive_fraction,  # default: 512, 0.25
             bbox_reg_weights,  # None
             score_thresh,  # default: 0.05
             nms_thresh,  # default: 0.5
-            detection_per_img):  # default: 100
+            detection_per_img,
+            relation_on
+    ):  # default: 100
         super(BoxHead, self).__init__()
         self.box_similarity = box_ops.box_iou
         self.proposal_matcher = det_utils.Matcher(
@@ -59,12 +56,13 @@ class BoxHead(torch.nn.Module):
         self.box_coder = det_utils.BoxCoder(bbox_reg_weights)
 
         self.box_roi_pool = box_roi_pool  # Multi-scale RoIAlign pooling
-        self.box_head = box_head  # TwoMLPHead
+        self.feature_extractor = feature_extractor  # TwoMLPHead
         self.box_predictor = box_predictor  # FastRCNNPredictor
 
         self.score_thresh = score_thresh  # default: 0.05
         self.nms_thresh = nms_thresh  # default: 0.5
         self.detection_per_img = detection_per_img  # default: 100
+        self.relation_on = relation_on
 
     def assign_targets_to_proposals(self, proposals, gt_boxes, gt_labels):
         matched_idxs = []
@@ -112,10 +110,7 @@ class BoxHead(torch.nn.Module):
         assert all(["boxes" in t for t in targets])
         assert all(["labels" in t for t in targets])
 
-    def select_training_samples(self,
-                                proposals,  # type: List[Tensor]
-                                targets  # type: Optional[List[Dict[str, Tensor]]]
-                                ):
+    def select_training_samples(self, proposals, targets):
         self.check_targets(targets)
         assert targets is not None
 
@@ -142,10 +137,10 @@ class BoxHead(torch.nn.Module):
 
     def postprocess_detections(
             self,
-            class_logits,  # type: Tensor
-            box_regression,  # type: Tensor
-            proposals,  # type: List[Tensor]
-            image_shapes  # type: List[Tuple[int, int]]
+            class_logits,
+            box_regression,
+            proposals,
+            image_shapes
     ):
         device = class_logits.device
         num_classes = class_logits.shape[-1]
@@ -179,17 +174,26 @@ class BoxHead(torch.nn.Module):
             all_labels.append(labels)
         return all_boxes, all_scores, all_labels
 
-    def forward(self,
-                features,  # type: Dict[str, Tensor]
-                proposals,  # type: List[Tensor]
-                image_shapes,  # type: List[Tuple[int, int]]
-                targets=None  # type: Optional[List[Dict[str, Tensor]]]
-                ):
+    def forward(self, features, proposals, image_shapes, targets=None):
         if targets is not None:
             for t in targets:
                 floating_point_types = (torch.float, torch.double, torch.half)
                 assert t["boxes"].dtype in floating_point_types, "target boxes must of float type"
                 assert t["labels"].dtype == torch.int64, "target labels must of int64 type"
+
+        if self.relation_on:
+            result = {}
+            box_features = self.box_roi_pool(features, proposals, image_shapes)
+            class_logits, box_regression = self.box_predictor(box_features)
+            boxes, scores, labels = self.postprocess_detections(
+                class_logits,
+                box_regression,
+                proposals,
+                image_shapes
+            )
+            result["proposals"] = boxes
+            result["labels"] = labels
+            return box_features, result, {}
 
         if self.training:
             proposals, labels, regression_targets = self.select_training_samples(proposals, targets)
@@ -197,9 +201,9 @@ class BoxHead(torch.nn.Module):
             labels = None
             regression_targets = None
         box_features = self.box_roi_pool(features, proposals, image_shapes)
-        box_features = self.box_head(box_features)
+        box_features = self.feature_extractor(box_features)
         class_logits, box_regression = self.box_predictor(box_features)
-        result = torch.jit.annotate(List[Dict[str, torch.Tensor]], [])
+        result = {}
         losses = {}
         if self.training:
             assert labels is not None and regression_targets is not None
@@ -209,16 +213,8 @@ class BoxHead(torch.nn.Module):
                 "loss_classifier": loss_classifier,
                 "loss_box_reg": loss_box_reg
             }
+            result["proposals"] = proposals
+            result["labels"] = labels
         else:
             boxes, scores, labels = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
-            num_images = len(boxes)
-            for i in range(num_images):
-                result.append(
-                    {
-                        "boxes": boxes[i],
-                        "labels": labels[i],
-                        "scores": scores[i],
-                    }
-                )
-
-        return result, losses
+        return box_features, result, losses

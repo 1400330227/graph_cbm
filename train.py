@@ -29,7 +29,7 @@ def create_model(num_classes, load_pretrain_weights=False):
         if len(missing_keys) != 0 or len(unexpected_keys) != 0:
             print("missing_keys: ", missing_keys)
             print("unexpected_keys: ", unexpected_keys)
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    in_features = model.roi_heads.box.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     return model
 

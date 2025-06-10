@@ -6,18 +6,19 @@ from collections import OrderedDict
 from torch import nn, Tensor
 from torchvision.ops import MultiScaleRoIAlign
 from graph_cbm.modeling.roi_heads.box_head import BoxHead
+from graph_cbm.modeling.roi_heads.roi_heads import RoIHeads, build_roi_heads
 from graph_cbm.modeling.structures.transform import GeneralizedRCNNTransform
 from graph_cbm.modeling.rpn.rpn import AnchorsGenerator, RPNHead, RegionProposalNetwork
 
 
 class GeneralizedRCNN(nn.Module):
-    def __init__(self, backbone, rpn, roi_heads, transform):
+    def __init__(self, backbone, rpn, roi_heads, transform, relation_on):
         super(GeneralizedRCNN, self).__init__()
         self.transform = transform
         self.backbone = backbone
         self.rpn = rpn
         self.roi_heads = roi_heads
-        self._has_warned = False
+        self.relation_on = relation_on
 
     @torch.jit.unused
     def eager_outputs(self, losses, detections):
@@ -53,24 +54,22 @@ class GeneralizedRCNN(nn.Module):
         if isinstance(features, torch.Tensor):
             features = OrderedDict([('0', features)])
         proposals, proposal_losses = self.rpn(images, features, targets)
-        detections, detector_losses = self.roi_heads(features, proposals, images.image_sizes, targets)
-        detections = self.transform.postprocess(detections, images.image_sizes, original_image_sizes)
-        losses = {}
-        losses.update(detector_losses)
-        losses.update(proposal_losses)
-        if torch.jit.is_scripting():
-            if not self._has_warned:
-                warnings.warn("RCNN always returns a (Losses, Detections) tuple in scripting")
-                self._has_warned = True
-            return losses, detections
+        x, detections, detector_losses = self.roi_heads(features, proposals, images.image_sizes, targets)
+
+        if self.training:
+            losses = {}
+            losses.update(detector_losses)
+            if not self.relation_on:
+                losses.update(proposal_losses)
+            return losses
         else:
-            return self.eager_outputs(losses, detections)
+            detections = self.transform.postprocess(detections, images.image_sizes, original_image_sizes)
+            return detections
 
 
 class TwoMLPHead(nn.Module):
     def __init__(self, in_channels, representation_size):
         super(TwoMLPHead, self).__init__()
-
         self.fc6 = nn.Linear(in_channels, representation_size)
         self.fc7 = nn.Linear(representation_size, representation_size)
 
@@ -78,7 +77,6 @@ class TwoMLPHead(nn.Module):
         x = x.flatten(start_dim=1)
         x = F.relu(self.fc6(x))
         x = F.relu(self.fc7(x))
-
         return x
 
 
@@ -118,7 +116,7 @@ def build_detection_model(
         rpn_positive_fraction=0.5,
         rpn_score_thresh=0.0,
         box_roi_pool=None,
-        box_head=None,
+        feature_extractor=None,
         box_predictor=None,
         box_score_thresh=0.05,
         box_nms_thresh=0.5,
@@ -127,7 +125,8 @@ def build_detection_model(
         box_bg_iou_thresh=0.5,
         box_batch_size_per_image=512,
         box_positive_fraction=0.25,
-        bbox_reg_weights=None
+        bbox_reg_weights=None,
+        relation_on=False,
 ):
     if not hasattr(backbone, "out_channels"):
         raise ValueError(
@@ -168,13 +167,14 @@ def build_detection_model(
         score_thresh=rpn_score_thresh)
     if box_roi_pool is None:
         box_roi_pool = MultiScaleRoIAlign(
-            featmap_names=['0', '1', '2', '3'],  # 在哪些特征层进行roi pooling
+            featmap_names=['0', '1', '2', '3'],
             output_size=[7, 7],
-            sampling_ratio=2)
-    if box_head is None:
+            sampling_ratio=2
+        )
+    if feature_extractor is None:
         resolution = box_roi_pool.output_size[0]  # 默认等于7
         representation_size = 1024
-        box_head = TwoMLPHead(
+        feature_extractor = TwoMLPHead(
             out_channels * resolution ** 2,
             representation_size
         )
@@ -184,17 +184,25 @@ def build_detection_model(
             representation_size,
             num_classes
         )
-    roi_heads = BoxHead(
-        box_roi_pool, box_head, box_predictor,
-        box_fg_iou_thresh, box_bg_iou_thresh,  # 0.5  0.5
-        box_batch_size_per_image, box_positive_fraction,  # 512  0.25
+    roi_heads = build_roi_heads(
+        box_roi_pool,
+        feature_extractor,
+        box_predictor,
+        box_fg_iou_thresh,
+        box_bg_iou_thresh,  # 0.5  0.5
+        box_batch_size_per_image,
+        box_positive_fraction,  # 512  0.25
         bbox_reg_weights,
-        box_score_thresh, box_nms_thresh, box_detections_per_img)  # 0.05  0.5  100
+        box_score_thresh,
+        box_nms_thresh,
+        box_detections_per_img,
+        relation_on,
+    )  # 0.05  0.5  100
 
     if image_mean is None:
         image_mean = [0.485, 0.456, 0.406]
     if image_std is None:
         image_std = [0.229, 0.224, 0.225]
     transform = GeneralizedRCNNTransform(min_size, max_size, image_mean, image_std)
-    generalized_rcnn = GeneralizedRCNN(backbone, rpn, roi_heads, transform)
+    generalized_rcnn = GeneralizedRCNN(backbone, rpn, roi_heads, transform, relation_on)
     return generalized_rcnn
