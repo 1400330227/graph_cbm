@@ -49,7 +49,7 @@ class AnchorsGenerator(nn.Module):
 
         base_anchors = torch.stack([-ws, -hs, ws, hs], dim=1) / 2
 
-        return base_anchors.round()  # round 四舍五
+        return base_anchors.round()
 
     def set_cell_anchors(self, dtype, device):
         if self.cell_anchors is not None:
@@ -158,10 +158,19 @@ def concat_box_prediction_layers(box_cls, box_regression):
 
 
 class RegionProposalNetwork(torch.nn.Module):
-    def __init__(self, anchor_generator, head,
-                 fg_iou_thresh, bg_iou_thresh,
-                 batch_size_per_image, positive_fraction,
-                 pre_nms_top_n, post_nms_top_n, nms_thresh, score_thresh=0.0):
+    def __init__(
+            self,
+            anchor_generator,
+            head,
+            fg_iou_thresh,
+            bg_iou_thresh,
+            batch_size_per_image,
+            positive_fraction,
+            pre_nms_top_n,
+            post_nms_top_n,
+            nms_thresh,
+            score_thresh=0.0
+    ):
         super(RegionProposalNetwork, self).__init__()
         self.anchor_generator = anchor_generator
         self.head = head
@@ -289,9 +298,7 @@ class RegionProposalNetwork(torch.nn.Module):
         num_images = len(anchors)
         num_anchors_per_level_shape_tensors = [o[0].shape for o in objectness]
         num_anchors_per_level = [s[0] * s[1] * s[2] for s in num_anchors_per_level_shape_tensors]
-        objectness, pred_bbox_deltas = concat_box_prediction_layers(objectness,
-                                                                    pred_bbox_deltas)
-
+        objectness, pred_bbox_deltas = concat_box_prediction_layers(objectness, pred_bbox_deltas)
         proposals = self.box_coder.decode(pred_bbox_deltas.detach(), anchors)
         proposals = proposals.view(num_images, -1, 4)
         boxes, scores = self.filter_proposals(proposals, objectness, images.image_sizes, num_anchors_per_level)

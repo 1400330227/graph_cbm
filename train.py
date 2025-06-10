@@ -5,8 +5,8 @@ import torch
 
 from datasets import transforms
 from datasets.voc_dataset import VOCDataSet
-from graph_cbm.modeling.generalized_rcnn import FasterRCNN, FastRCNNPredictor
 from graph_cbm.modeling.backbone.backbone import build_resnet50_backbone
+from graph_cbm.modeling.generalized_rcnn import build_detection_model, FastRCNNPredictor
 from graph_cbm.modeling.structures.cfg_node import CfgNode
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
@@ -22,7 +22,7 @@ def create_model(num_classes, load_pretrain_weights=False):
         'returned_layers': None,
     })
     backbone = build_resnet50_backbone(cfg)
-    model = FasterRCNN(backbone=backbone, num_classes=91)
+    model = build_detection_model(backbone=backbone, num_classes=91)
     if load_pretrain_weights:
         weights_dict = torch.load("./backbone/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
         missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
@@ -35,7 +35,7 @@ def create_model(num_classes, load_pretrain_weights=False):
 
 
 def main(args):
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using {} device training.".format(device.type))
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     data_transform = {
@@ -111,11 +111,16 @@ def main(args):
     val_map = []
 
     for epoch in range(args.start_epoch, args.epochs):
-        # train for one epoch, printing every 10 iterations
-        mean_loss, lr = train_one_epoch(model, optimizer, train_data_loader,
-                                        device=device, epoch=epoch,
-                                        print_freq=50, warmup=True,
-                                        scaler=scaler)
+        mean_loss, lr = train_one_epoch(
+            model,
+            optimizer,
+            train_data_loader,
+            device=device,
+            epoch=epoch,
+            print_freq=50,
+            warmup=True,
+            scaler=scaler
+        )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
         lr_scheduler.step()

@@ -1,4 +1,3 @@
-import os
 import torch
 import torchvision.models
 from torchvision.models.feature_extraction import create_feature_extractor
@@ -52,9 +51,9 @@ def build_resnet50_backbone(cfg, norm_layer=FrozenBatchNorm2d):
         out_channels=out_channels,
         extra_blocks=extra_blocks
     )
-    img = torch.randn(1, 3, 224, 224)
-    outputs = backbone(img)
-    [print(f"{k} shape: {v.shape}") for k, v in outputs.items()]
+    # img = torch.randn(1, 3, 224, 224)
+    # outputs = backbone(img)
+    # [print(f"{k} shape: {v.shape}") for k, v in outputs.items()]
     return backbone
 
 
@@ -97,6 +96,7 @@ def build_efficientnet_backbone(cfg):
     )
     return backbone
 
+
 def build_vgg_backbone(cfg):
     models = torchvision.models.vgg16(pretrained=cfg.pretrained)
     return_nodes = {
@@ -121,6 +121,7 @@ def build_vgg_backbone(cfg):
     # outputs = backbone(img)
     # [print(f"{k} shape: {v.shape}") for k, v in outputs.items()]
     return backbone
+
 
 if __name__ == '__main__':
     cfg = CfgNode({
