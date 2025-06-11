@@ -1,20 +1,16 @@
-"""
-该脚本用于调用训练好的模型权重去计算验证集/测试集的COCO指标
-以及每个类别的mAP(IoU=0.5)
-"""
-
 import os
 import json
-
 import torch
 from tqdm import tqdm
 import numpy as np
 
-import transforms
-from network_files import FasterRCNN
-from backbone import resnet50_fpn_backbone
-from my_dataset import VOCDataSet
-from train_utils import get_coco_api_from_dataset, CocoEvaluator
+from datasets import transforms
+from datasets.voc_dataset import VOCDataSet
+from graph_cbm.modeling.backbone.backbone import build_resnet50_backbone
+from graph_cbm.modeling.generalized_rcnn import build_detection_model
+from graph_cbm.modeling.structures.cfg_node import CfgNode
+from graph_cbm.utils.coco_eval import CocoEvaluator
+from graph_cbm.utils.coco_utils import get_coco_api_from_dataset
 
 
 def summarize(self, catId=None):
@@ -98,7 +94,7 @@ def main(parser_data):
     }
 
     # read class_indict
-    label_json_path = './pascal_voc_classes.json'
+    label_json_path = 'data/VOCdevkit/pascal_voc_classes.json'
     assert os.path.exists(label_json_path), "json file {} dose not exist.".format(label_json_path)
     with open(label_json_path, 'r') as f:
         class_dict = json.load(f)
@@ -126,8 +122,15 @@ def main(parser_data):
 
     # create model num_classes equal background + 20 classes
     # 注意，这里的norm_layer要和训练脚本中保持一致
-    backbone = resnet50_fpn_backbone(norm_layer=torch.nn.BatchNorm2d)
-    model = FasterRCNN(backbone=backbone, num_classes=parser_data.num_classes + 1)
+    cfg = CfgNode({
+        'pretrain_path': "",
+        'norm_layer': torch.nn.BatchNorm2d,
+        'trainable_layers': 3,
+        'extra_blocks': None,
+        'returned_layers': None,
+    })
+    backbone = build_resnet50_backbone(cfg)
+    model = build_detection_model(backbone=backbone, num_classes=parser_data.num_classes + 1)
 
     # 载入你自己训练好的模型权重
     weights_path = parser_data.weights_path
@@ -200,10 +203,11 @@ if __name__ == "__main__":
     parser.add_argument('--num-classes', type=int, default='20', help='number of classes')
 
     # 数据集的根目录(VOCdevkit)
-    parser.add_argument('--data-path', default='/data/', help='dataset root')
+    parser.add_argument('--data-path', default='data', help='dataset root')
 
     # 训练好的权重文件
-    parser.add_argument('--weights-path', default='./save_weights/model.pth', type=str, help='training weights')
+    parser.add_argument('--weights-path', default='save_weights/resnet-fpn-model-1.pth', type=str,
+                        help='training weights')
 
     # batch size
     parser.add_argument('--batch_size', default=1, type=int, metavar='N',

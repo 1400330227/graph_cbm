@@ -180,7 +180,8 @@ class BoxHead(torch.nn.Module):
                 floating_point_types = (torch.float, torch.double, torch.half)
                 assert t["boxes"].dtype in floating_point_types, "target boxes must of float type"
                 assert t["labels"].dtype == torch.int64, "target labels must of int64 type"
-
+        result = []
+        losses = {}
         if self.relation_on:
             result = {}
             box_features = self.box_roi_pool(features, proposals, image_shapes)
@@ -191,9 +192,8 @@ class BoxHead(torch.nn.Module):
                 proposals,
                 image_shapes
             )
-            result["proposals"] = boxes
-            result["labels"] = labels
-            return box_features, result, {}
+            result = [{"boxes": b, "labels": l, "scores": s} for b, l, s in zip(boxes, labels, scores)]
+            return box_features, result, losses
 
         if self.training:
             proposals, labels, regression_targets = self.select_training_samples(proposals, targets)
@@ -203,8 +203,6 @@ class BoxHead(torch.nn.Module):
         box_features = self.box_roi_pool(features, proposals, image_shapes)
         box_features = self.feature_extractor(box_features)
         class_logits, box_regression = self.box_predictor(box_features)
-        result = {}
-        losses = {}
         if self.training:
             assert labels is not None and regression_targets is not None
             loss_classifier, loss_box_reg = fasterrcnn_loss(
@@ -213,8 +211,7 @@ class BoxHead(torch.nn.Module):
                 "loss_classifier": loss_classifier,
                 "loss_box_reg": loss_box_reg
             }
-            result["proposals"] = proposals
-            result["labels"] = labels
         else:
             boxes, scores, labels = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
+            result = [{"boxes": b, "labels": l, "scores": s} for b, l, s in zip(boxes, labels, scores)]
         return box_features, result, losses

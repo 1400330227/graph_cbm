@@ -75,7 +75,7 @@ def main(args):
     val_dataset = VOCDataSet(VOC_root, "2012", data_transform["val"], "val.txt")
     val_data_set_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=args.batch_size,
         shuffle=False,
         pin_memory=True,
         num_workers=nw,
@@ -138,7 +138,7 @@ def main(args):
             'epoch': epoch}
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        torch.save(save_files, "./save_weights/resNetFpn-model-{}.pth".format(epoch))
+        torch.save(save_files, "save_weights/resnet-fpn-model-{}.pth".format(epoch))
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
     if len(val_map) != 0:
@@ -150,10 +150,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description=__doc__)
-    parser.add_argument('--device', default='cuda:0', help='device')
+    parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
-    parser.add_argument('--output-dir', default='./save_weights', help='path where to save')
+    parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--epochs', default=15, type=int, metavar='N', help='number of total epochs to run')
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)',
                         dest='weight_decay')
-    parser.add_argument('--batch_size', default=8, type=int, metavar='N',
+    parser.add_argument('--batch_size', default=16, type=int, metavar='N',
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")

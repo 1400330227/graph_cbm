@@ -14,11 +14,10 @@ class RoIHeads(nn.ModuleDict):
     def forward(self, features, proposals, image_shapes, targets=None):
         losses = OrderedDict()
         x, detections, loss_box = self.box(features, proposals, image_shapes, targets)
-        proposals, labels = detections['proposals'], detections['labels']
         if not self.relation_on:
             losses.update(loss_box)
         if self.relation_on:
-            x, detections, loss_relation = self.relation(features, proposals, labels, image_shapes, targets)
+            x, detections, loss_relation = self.relation(features, detections, image_shapes, targets)
             losses.update(loss_relation)
         return x, detections, losses
 

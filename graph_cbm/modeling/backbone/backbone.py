@@ -29,7 +29,7 @@ def build_resnet50_backbone(cfg, norm_layer=FrozenBatchNorm2d):
     if isinstance(norm_layer, FrozenBatchNorm2d):
         overwrite_eps(resnet_backbone, 0.0)
     if pretrain_path != "":
-        print(resnet_backbone.load_state_dict(torch.load(pretrain_path), strict=False))
+        resnet_backbone.load_state_dict(torch.load(pretrain_path), strict=False)
     layers_to_train = ['layer4', 'layer3', 'layer2', 'layer1', 'conv1'][:trainable_layers]
     if trainable_layers == 5:
         layers_to_train.append("bn1")
