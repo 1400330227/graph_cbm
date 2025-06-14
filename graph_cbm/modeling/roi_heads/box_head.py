@@ -183,8 +183,8 @@ class BoxHead(torch.nn.Module):
         result = []
         losses = {}
         if self.relation_on:
-            result = {}
             box_features = self.box_roi_pool(features, proposals, image_shapes)
+            box_features = self.feature_extractor(box_features)
             class_logits, box_regression = self.box_predictor(box_features)
             boxes, scores, labels = self.postprocess_detections(
                 class_logits,

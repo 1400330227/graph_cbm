@@ -129,7 +129,7 @@ def clip_boxes_to_image(boxes, size):
         boxes_y = torch.max(boxes_y, torch.tensor(0, dtype=boxes.dtype, device=boxes.device))
         boxes_y = torch.min(boxes_y, torch.tensor(height, dtype=boxes.dtype, device=boxes.device))
     else:
-        boxes_x = boxes_x.clamp(min=0, max=width)   # 限制x坐标范围在[0,width]之间
+        boxes_x = boxes_x.clamp(min=0, max=width)  # 限制x坐标范围在[0,width]之间
         boxes_y = boxes_y.clamp(min=0, max=height)  # 限制y坐标范围在[0,height]之间
 
     clipped_boxes = torch.stack((boxes_x, boxes_y), dim=dim)
@@ -179,3 +179,10 @@ def box_iou(boxes1, boxes2):
     iou = inter / (area1[:, None] + area2 - inter)
     return iou
 
+
+def box_union(boxes1, boxes2):
+    assert boxes1.shape == boxes2.shape
+    lt = torch.min(boxes1[:, :2], boxes2[:, :2])
+    rb = torch.max(boxes1[:, 2:], boxes2[:, 2:])
+    union_box = torch.cat((lt, rb), dim=1)
+    return union_box

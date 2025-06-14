@@ -1,22 +1,79 @@
 import torch
 import numpy.random as npr
 from torch import nn
-from graph_cbm.modeling.structures import boxes as box_ops
+
+from graph_cbm.modeling.roi_heads.roi_relation_predictors import build_roi_relation_predictor
+from graph_cbm.modeling.structures import boxes as box_ops, det_utils
 
 
 class RelationHead(nn.Module):
     def __init__(
             self,
             relation_roi_pool,
-            batch_size_per_image=1024,
-            positive_fraction=0.25,
-            fg_thres=0.5,
+            feature_extractor,
+            fg_iou_thresh,
+            bg_iou_thresh,
+            batch_size_per_image,
+            positive_fraction,
+            fg_thres,
+            use_union_box,
+            num_sample_per_gt_rel,
+            embedding_dim,
+            num_heads,
     ):
         super(RelationHead, self).__init__()
-        self.batch_size = batch_size_per_image
+        self.batch_size_per_image = batch_size_per_image
         self.positive_fraction = positive_fraction
         self.fg_thres = fg_thres
         self.relation_roi_pool = relation_roi_pool
+        self.feature_extractor = feature_extractor
+        self.use_union_box = use_union_box
+        self.num_sample_per_gt_rel = num_sample_per_gt_rel
+        self.rect_size = 27
+        self.proposal_matcher = det_utils.Matcher(
+            fg_iou_thresh,
+            bg_iou_thresh,
+            allow_low_quality_matches=False
+        )
+        self.rect_conv = nn.Sequential(*[
+            nn.Conv2d(2, 256 // 2, kernel_size=7, stride=2, padding=3, bias=True),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(256 // 2, momentum=0.01),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(256 // 2, 256, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(256, momentum=0.01),
+        ])
+        self.predictor = build_roi_relation_predictor(embedding_dim, num_heads)
+
+    def assign_targets_to_proposals(self, proposals, targets):
+        gt_boxes = [t["boxes"].to(proposals[0]["boxes"].dtype) for t in targets]
+        gt_labels = [t["labels"] for t in targets]
+        prp_boxes = [t["boxes"].to(proposals[0]["boxes"].dtype) for t in proposals]
+        matched_idxs = []
+        labels = []
+        for proposals_in_image, gt_boxes_in_image, gt_labels_in_image in zip(prp_boxes, gt_boxes, gt_labels):
+            if gt_boxes_in_image.numel() == 0:  # 该张图像中没有gt框，为背景
+                device = proposals_in_image.device
+                clamped_matched_idxs_in_image = torch.zeros(
+                    (proposals_in_image.shape[0],), dtype=torch.int64, device=device
+                )
+                labels_in_image = torch.zeros(
+                    (proposals_in_image.shape[0],), dtype=torch.int64, device=device
+                )
+            else:
+                match_quality_matrix = box_ops.box_iou(gt_boxes_in_image, proposals_in_image)
+                matched_idxs_in_image = self.proposal_matcher(match_quality_matrix)
+                clamped_matched_idxs_in_image = matched_idxs_in_image.clamp(min=0)
+                labels_in_image = gt_labels_in_image[clamped_matched_idxs_in_image]
+                labels_in_image = labels_in_image.to(dtype=torch.int64)
+                bg_inds = matched_idxs_in_image == self.proposal_matcher.BELOW_LOW_THRESHOLD  # -1
+                labels_in_image[bg_inds] = 0
+                ignore_inds = matched_idxs_in_image == self.proposal_matcher.BETWEEN_THRESHOLDS  # -2
+                labels_in_image[ignore_inds] = -1  # -1 is ignored by sampler
+            matched_idxs.append(clamped_matched_idxs_in_image)
+            labels.append(labels_in_image)
+        return matched_idxs, labels
 
     def motif_rel_fg_bg_sampling(self, device, tgt_rel_matrix, ious, is_match, rel_possibility):
         """
@@ -76,15 +133,15 @@ class RelationHead(nn.Module):
             prp_tail_idxs = prp_tail_idxs[valid_pair]
             rel_possibility[prp_head_idxs, prp_tail_idxs] = 0
             # construct corresponding proposal triplets corresponding to i_th gt relation
-            fg_labels = torch.tensor([tgt_rel_lab] * prp_tail_idxs.shape[0], dtype=torch.int64, device=device).view(-1,
-                                                                                                                    1)
-            fg_rel_i = torch.concat((prp_head_idxs.view(-1, 1), prp_tail_idxs.view(-1, 1), fg_labels), dim=-1).to(
-                torch.int64)
+            fg_labels = (torch.tensor([tgt_rel_lab] * prp_tail_idxs.shape[0], dtype=torch.int64, device=device)
+                         .view(-1, 1))
+            fg_rel_i = (torch.concat((prp_head_idxs.view(-1, 1), prp_tail_idxs.view(-1, 1), fg_labels), dim=-1)
+                        .to(torch.int64))
             # select if too many corresponding proposal pairs to one pair of gt relationship triplet
             # NOTE that in original motif, the selection is based on a ious_score score
             if fg_rel_i.shape[0] > self.num_sample_per_gt_rel:
-                ious_score = (ious[tgt_head_idx, prp_head_idxs] * ious[tgt_tail_idx, prp_tail_idxs]).view(
-                    -1).detach().cpu().numpy()
+                ious_score = ((ious[tgt_head_idx, prp_head_idxs] * ious[tgt_tail_idx, prp_tail_idxs])
+                              .view(-1).detach().cpu().numpy())
                 ious_score = ious_score / ious_score.sum()
                 perm = npr.choice(ious_score.shape[0], p=ious_score, size=self.num_sample_per_gt_rel, replace=False)
                 fg_rel_i = fg_rel_i[perm]
@@ -118,21 +175,20 @@ class RelationHead(nn.Module):
 
         return torch.concat((fg_rel_triplets, bg_rel_triplets), dim=0), binary_rel
 
-    def select_training_samples(self, proposals, labels, targets):
+    def detect_training_samples(self, proposals, targets):
         self.num_pos_per_img = int(self.batch_size_per_image * self.positive_fraction)
         rel_idx_pairs = []
         rel_labels = []
         rel_sym_binarys = []
-        for img_idx, (proposal, label, target) in enumerate(zip(proposals, labels, targets)):
-            device = proposal.device
-            prp_box = proposal
-            prp_lab = label.long()
-            tgt_box = target.boxes
+        for img_idx, (proposal, target) in enumerate(zip(proposals, targets)):
+            device = proposal["boxes"].device
+            prp_box = proposal["boxes"]
+            prp_lab = proposal["labels"].long()
+            tgt_box = target["boxes"]
             tgt_lab = target["labels"].long()
             tgt_rel_matrix = target["relation"]
-            ious = box_ops.box_iou(target, proposal)
+            ious = box_ops.box_iou(tgt_box, prp_box)
             is_match = (tgt_lab[:, None] == prp_lab[None]) & (ious > self.fg_thres)
-            prp_self_iou = box_ops.box_iou(proposal, proposal)
             num_prp = prp_box.shape[0]
             rel_possibility = (torch.ones((num_prp, num_prp), device=device).long() -
                                torch.eye(num_prp, device=device).long())
@@ -141,7 +197,8 @@ class RelationHead(nn.Module):
             img_rel_triplets, binary_rel = self.motif_rel_fg_bg_sampling(
                 device,
                 tgt_rel_matrix,
-                ious, is_match,
+                ious,
+                is_match,
                 rel_possibility
             )
             rel_idx_pairs.append(img_rel_triplets[:, :2])  # (num_rel, 2),  (sub_idx, obj_idx)
@@ -149,15 +206,70 @@ class RelationHead(nn.Module):
             rel_sym_binarys.append(binary_rel)
         return proposals, rel_labels, rel_idx_pairs, rel_sym_binarys
 
-    def forward(self, features, proposals, labels, image_shapes, targets=None):
+    def resize_boxe(self, boxes, original_size, new_size):
+        ratios = [
+            torch.tensor(s, dtype=torch.float32, device=boxes.device) /
+            torch.tensor(s_orig, dtype=torch.float32, device=boxes.device)
+            for s, s_orig in zip(new_size, original_size)
+        ]
+        ratios_height, ratios_width = ratios
+        xmin, ymin, xmax, ymax = boxes.unbind(1)
+        xmin = xmin * ratios_width
+        xmax = xmax * ratios_width
+        ymin = ymin * ratios_height
+        ymax = ymax * ratios_height
+        return torch.stack((xmin, ymin, xmax, ymax), dim=1)
+
+    def union_feature_extractor(self, features, proposals, rel_pair_idxs, image_shapes):
+        device = features["0"].device
+        prp_boxes = [t["boxes"].to(proposals[0]["boxes"].dtype) for t in proposals]
+        union_proposals = []
+        rect_inputs = []
+        for proposal, rel_pair_idx, original_size in zip(prp_boxes, rel_pair_idxs, image_shapes):
+            head_proposal = proposal[rel_pair_idx[:, 0]]
+            tail_proposal = proposal[rel_pair_idx[:, 1]]
+            union_proposal = box_ops.box_union(head_proposal, tail_proposal)
+            union_proposals.append(union_proposal)
+
+            # use range to construct rectangle, sized (rect_size, rect_size)
+            num_rel = len(rel_pair_idx)
+            dummy_x_range = (torch.arange(self.rect_size, device=device).view(1, 1, -1)
+                             .expand(num_rel, self.rect_size, self.rect_size))
+            dummy_y_range = (torch.arange(self.rect_size, device=device).view(1, -1, 1)
+                             .expand(num_rel, self.rect_size, self.rect_size))
+            # resize bbox to the scale rect_size
+            head_proposal = self.resize_boxe(head_proposal, original_size, (self.rect_size, self.rect_size))
+            tail_proposal = self.resize_boxe(tail_proposal, original_size, (self.rect_size, self.rect_size))
+            head_rect = ((dummy_x_range >= head_proposal[:, 0].floor().view(-1, 1, 1).long()) &
+                         (dummy_x_range <= head_proposal[:, 2].ceil().view(-1, 1, 1).long()) &
+                         (dummy_y_range >= head_proposal[:, 1].floor().view(-1, 1, 1).long()) &
+                         (dummy_y_range <= head_proposal[:, 3].ceil().view(-1, 1, 1).long())).float()
+            tail_rect = ((dummy_x_range >= tail_proposal[:, 0].floor().view(-1, 1, 1).long()) &
+                         (dummy_x_range <= tail_proposal[:, 2].ceil().view(-1, 1, 1).long()) &
+                         (dummy_y_range >= tail_proposal[:, 1].floor().view(-1, 1, 1).long()) &
+                         (dummy_y_range <= tail_proposal[:, 3].ceil().view(-1, 1, 1).long())).float()
+
+            rect_input = torch.stack((head_rect, tail_rect), dim=1)  # (num_rel, 4, rect_size, rect_size)
+            rect_inputs.append(rect_input)
+
+        rect_inputs = torch.cat(rect_inputs, dim=0)
+        rect_features = self.rect_conv(rect_inputs)
+
+        union_vis_features = self.relation_roi_pool(features, union_proposals, image_shapes)
+        union_features = union_vis_features + rect_features
+        union_features = self.feature_extractor(union_features)
+
+        return union_features
+
+    def forward(self, features, proposals, image_shapes, targets=None):
         if self.training:
-            proposals, rel_labels, rel_pair_idxs, rel_binarys = self.select_training_samples(proposals, labels, targets)
+            proposals, rel_labels, rel_pair_idxs, rel_binarys = self.detect_training_samples(proposals, targets)
         else:
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.select_test_pairs(features[0].device, proposals)
-        roi_features = self.relation_roi_pool(features, proposals, image_shapes)
+        roi_features = self.relation_roi_pool(features, [t["boxes"] for t in proposals], image_shapes)
         if self.use_union_box:
-            union_features = self.union_feature_extractor(features, proposals, rel_pair_idxs)
+            union_features = self.union_feature_extractor(features, proposals, rel_pair_idxs, image_shapes)
         else:
             union_features = None
         refine_logits, relation_logits, add_losses = self.predictor(

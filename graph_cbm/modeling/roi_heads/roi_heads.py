@@ -26,8 +26,8 @@ def build_roi_heads(
         box_roi_pool,
         feature_extractor,
         box_predictor,
-        box_fg_iou_thresh,
-        box_bg_iou_thresh,  # 0.5  0.5
+        box_fg_iou_thresh, # 0.5
+        box_bg_iou_thresh,  # 0.5
         box_batch_size_per_image,
         box_positive_fraction,  # 512  0.25
         bbox_reg_weights,
@@ -38,22 +38,34 @@ def build_roi_heads(
 ):
     roi_heads = []
     box_head = BoxHead(
-        box_roi_pool,
-        feature_extractor,
-        box_predictor,
-        box_fg_iou_thresh,
-        box_bg_iou_thresh,  # 0.5  0.5
-        box_batch_size_per_image,
-        box_positive_fraction,  # 512  0.25
-        bbox_reg_weights,
-        box_score_thresh,
-        box_nms_thresh,
-        box_detections_per_img,
-        relation_on
+        box_roi_pool=box_roi_pool,
+        feature_extractor=feature_extractor,
+        box_predictor=box_predictor,
+        fg_iou_thresh=0.5,
+        bg_iou_thresh=0.3,  # 0.5  0.5
+        batch_size_per_image=box_batch_size_per_image,
+        positive_fraction=box_positive_fraction,  # 512  0.25
+        bbox_reg_weights=bbox_reg_weights,
+        score_thresh=box_score_thresh,
+        nms_thresh=box_nms_thresh,
+        detection_per_img=box_detections_per_img,
+        relation_on=relation_on,
     )
     roi_heads.append(("box", box_head))
     if relation_on:
-        relation_head = RelationHead(box_roi_pool)
-        roi_heads.append(("rel", relation_head))
+        relation_head = RelationHead(
+            relation_roi_pool=box_roi_pool,
+            feature_extractor=feature_extractor,
+            fg_iou_thresh=0.5,
+            bg_iou_thresh=0.3,
+            batch_size_per_image=box_batch_size_per_image,
+            positive_fraction=box_positive_fraction,
+            fg_thres=0.5,
+            use_union_box=True,
+            num_sample_per_gt_rel=4,
+            embedding_dim=256,
+            num_heads=8,
+        )
+        roi_heads.append(("relation", relation_head))
     roi_heads = RoIHeads(roi_heads, relation_on=relation_on)
     return roi_heads

@@ -126,7 +126,8 @@ def build_detection_model(
         box_batch_size_per_image=512,
         box_positive_fraction=0.25,
         bbox_reg_weights=None,
-        relation_on=False,
+        relation_on=True,
+        representation_size=4096,
 ):
     if not hasattr(backbone, "out_channels"):
         raise ValueError(
@@ -173,31 +174,31 @@ def build_detection_model(
         )
     if feature_extractor is None:
         resolution = box_roi_pool.output_size[0]  # 默认等于7
-        representation_size = 1024
+        # representation_size = 4096
         feature_extractor = TwoMLPHead(
             out_channels * resolution ** 2,
             representation_size
         )
     if box_predictor is None:
-        representation_size = 1024
+        # representation_size = 4096
         box_predictor = FastRCNNPredictor(
             representation_size,
             num_classes
         )
     roi_heads = build_roi_heads(
-        box_roi_pool,
-        feature_extractor,
-        box_predictor,
-        box_fg_iou_thresh,
-        box_bg_iou_thresh,  # 0.5  0.5
-        box_batch_size_per_image,
-        box_positive_fraction,  # 512  0.25
-        bbox_reg_weights,
-        box_score_thresh,
-        box_nms_thresh,
-        box_detections_per_img,
-        relation_on,
-    )  # 0.05  0.5  100
+        box_roi_pool=box_roi_pool,
+        feature_extractor=feature_extractor,
+        box_predictor=box_predictor,
+        box_fg_iou_thresh=box_fg_iou_thresh,
+        box_bg_iou_thresh=box_bg_iou_thresh,  # 0.5  0.5
+        box_batch_size_per_image=box_batch_size_per_image,
+        box_positive_fraction=box_positive_fraction,  # 512  0.25
+        bbox_reg_weights=bbox_reg_weights,
+        box_score_thresh=box_score_thresh,  # 0.05
+        box_nms_thresh=box_nms_thresh,  # 0.5
+        box_detections_per_img=box_detections_per_img,  # 100
+        relation_on=relation_on,
+    )
 
     if image_mean is None:
         image_mean = [0.485, 0.456, 0.406]

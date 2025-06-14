@@ -22,7 +22,7 @@ def create_model(num_classes, load_pretrain_weights=False):
         'returned_layers': None,
     })
     backbone = build_resnet50_backbone(cfg)
-    model = build_detection_model(backbone=backbone, num_classes=91)
+    model = build_detection_model(backbone=backbone, num_classes=num_classes)
     if load_pretrain_weights:
         weights_dict = torch.load("./backbone/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
         missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
@@ -35,7 +35,7 @@ def create_model(num_classes, load_pretrain_weights=False):
 
 
 def main(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     print("Using {} device training.".format(device.type))
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     data_transform = {
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)',
                         dest='weight_decay')
-    parser.add_argument('--batch_size', default=16, type=int, metavar='N',
+    parser.add_argument('--batch_size', default=2, type=int, metavar='N',
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
