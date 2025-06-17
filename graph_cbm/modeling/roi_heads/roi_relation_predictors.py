@@ -2,23 +2,50 @@ import math
 import torch
 from torch import nn, Tensor
 
-from graph_cbm.modeling.roi_heads.transformer import TransformerContext
+from graph_cbm.modeling.roi_heads.transformer import TransformerContext, PositionEmbeddingRandom, FrequencyBias
 
 
 class RoIRelationPredictor(nn.Module):
-    def __init__(self, embedding_dim, num_heads):
+    def __init__(
+            self,
+            embedding_dim,
+            num_heads,
+            feature_extractor,
+            obj_classes,
+            num_rel_cls,
+            representation_size
+    ):
         super(RoIRelationPredictor, self).__init__()
-        self.context_layer = TransformerContext(embedding_dim, num_heads)
+        self.weight_dim = 256
+        self.hidden_dim = 512
+        self.representation_size = representation_size
+        self.obj_classes = obj_classes
+        self.num_rel_cls = num_rel_cls
+        self.context_layer = TransformerContext(
+            embedding_dim=embedding_dim,
+            weight_dim=self.weight_dim,
+            hidden_dim=self.hidden_dim,
+            num_heads=num_heads,
+            feature_extractor=feature_extractor,
+            obj_classes=obj_classes,
+            representation_size=representation_size,
+        )
+        # self.freq_bias = FrequencyBias(config, statistics)
+        self.position_encoder = PositionEmbeddingRandom(num_pos_feats=embedding_dim // 2)
+        self.feature_extractor = feature_extractor
+        self.post_emb = nn.Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = nn.Linear(self.hidden_dim * 2, self.representation_size)
+        self.rel_compress = nn.Linear(self.representation_size, num_rel_cls)
 
     def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
-        obj_dists, obj_preds, edge_ctx, _ = self.context_layer(roi_features, proposals)
+        obj_dists, obj_preds, edge_ctx = self.context_layer(roi_features, proposals)
         edge_rep = self.post_emb(edge_ctx)
         edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim)
         head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim)
         tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim)
 
         num_rels = [r.shape[0] for r in rel_pair_idxs]
-        num_objs = [len(b) for b in proposals]
+        num_objs = [b["boxes"].shape[0] for b in proposals]
         assert len(num_rels) == len(num_objs)
 
         head_reps = head_rep.split(num_objs, dim=0)
@@ -34,19 +61,29 @@ class RoIRelationPredictor(nn.Module):
         pair_pred = torch.cat(pair_preds, dim=0)
 
         prod_rep = self.post_cat(prod_rep)
-        if self.use_vision:
-            prod_rep = prod_rep * union_features
-
+        prod_rep = prod_rep * union_features
         rel_dists = self.rel_compress(prod_rep)
-
-        if self.use_bias:
-            rel_dists = rel_dists + self.freq_bias.index_with_labels(pair_pred.long())
+        # rel_dists = rel_dists + self.freq_bias.index_with_labels(pair_pred.long())
 
         obj_dists = obj_dists.split(num_objs, dim=0)
         rel_dists = rel_dists.split(num_rels, dim=0)
         return obj_dists, rel_dists, {}
 
 
-def build_roi_relation_predictor(embedding_dim, num_heads):
-     roi_relation_predictor = RoIRelationPredictor(embedding_dim, num_heads)
-     return roi_relation_predictor
+def build_roi_relation_predictor(
+        embedding_dim,
+        num_heads,
+        feature_extractor,
+        obj_classes,
+        num_rel_cls,
+        representation_size
+):
+    roi_relation_predictor = RoIRelationPredictor(
+        embedding_dim,
+        num_heads,
+        feature_extractor,
+        obj_classes,
+        num_rel_cls,
+        representation_size
+    )
+    return roi_relation_predictor

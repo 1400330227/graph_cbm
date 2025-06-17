@@ -34,7 +34,11 @@ def build_roi_heads(
         box_score_thresh,
         box_nms_thresh,
         box_detections_per_img,
+        representation_size,
         relation_on=False,
+        obj_classes=150,
+        num_rel_cls=51,
+
 ):
     roi_heads = []
     box_head = BoxHead(
@@ -60,11 +64,14 @@ def build_roi_heads(
             bg_iou_thresh=0.3,
             batch_size_per_image=box_batch_size_per_image,
             positive_fraction=box_positive_fraction,
+            representation_size=representation_size,
             fg_thres=0.5,
             use_union_box=True,
             num_sample_per_gt_rel=4,
             embedding_dim=256,
             num_heads=8,
+            obj_classes=obj_classes,
+            num_rel_cls=num_rel_cls,
         )
         roi_heads.append(("relation", relation_head))
     roi_heads = RoIHeads(roi_heads, relation_on=relation_on)

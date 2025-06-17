@@ -22,7 +22,7 @@ def create_model(num_classes, load_pretrain_weights=False):
         'returned_layers': None,
     })
     backbone = build_resnet50_backbone(cfg)
-    model = build_detection_model(backbone=backbone, num_classes=num_classes)
+    model = build_detection_model(backbone=backbone, num_classes=num_classes, num_rel_cls=51)
     if load_pretrain_weights:
         weights_dict = torch.load("./backbone/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
         missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)

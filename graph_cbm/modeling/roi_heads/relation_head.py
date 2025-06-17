@@ -15,11 +15,14 @@ class RelationHead(nn.Module):
             bg_iou_thresh,
             batch_size_per_image,
             positive_fraction,
+            representation_size,
             fg_thres,
             use_union_box,
             num_sample_per_gt_rel,
             embedding_dim,
             num_heads,
+            obj_classes,
+            num_rel_cls,
     ):
         super(RelationHead, self).__init__()
         self.batch_size_per_image = batch_size_per_image
@@ -44,36 +47,15 @@ class RelationHead(nn.Module):
             nn.ReLU(inplace=True),
             nn.BatchNorm2d(256, momentum=0.01),
         ])
-        self.predictor = build_roi_relation_predictor(embedding_dim, num_heads)
+        self.predictor = build_roi_relation_predictor(
+            embedding_dim,
+            num_heads,
+            feature_extractor,
+            obj_classes,
+            num_rel_cls,
+            representation_size
+        )
 
-    def assign_targets_to_proposals(self, proposals, targets):
-        gt_boxes = [t["boxes"].to(proposals[0]["boxes"].dtype) for t in targets]
-        gt_labels = [t["labels"] for t in targets]
-        prp_boxes = [t["boxes"].to(proposals[0]["boxes"].dtype) for t in proposals]
-        matched_idxs = []
-        labels = []
-        for proposals_in_image, gt_boxes_in_image, gt_labels_in_image in zip(prp_boxes, gt_boxes, gt_labels):
-            if gt_boxes_in_image.numel() == 0:  # 该张图像中没有gt框，为背景
-                device = proposals_in_image.device
-                clamped_matched_idxs_in_image = torch.zeros(
-                    (proposals_in_image.shape[0],), dtype=torch.int64, device=device
-                )
-                labels_in_image = torch.zeros(
-                    (proposals_in_image.shape[0],), dtype=torch.int64, device=device
-                )
-            else:
-                match_quality_matrix = box_ops.box_iou(gt_boxes_in_image, proposals_in_image)
-                matched_idxs_in_image = self.proposal_matcher(match_quality_matrix)
-                clamped_matched_idxs_in_image = matched_idxs_in_image.clamp(min=0)
-                labels_in_image = gt_labels_in_image[clamped_matched_idxs_in_image]
-                labels_in_image = labels_in_image.to(dtype=torch.int64)
-                bg_inds = matched_idxs_in_image == self.proposal_matcher.BELOW_LOW_THRESHOLD  # -1
-                labels_in_image[bg_inds] = 0
-                ignore_inds = matched_idxs_in_image == self.proposal_matcher.BETWEEN_THRESHOLDS  # -2
-                labels_in_image[ignore_inds] = -1  # -1 is ignored by sampler
-            matched_idxs.append(clamped_matched_idxs_in_image)
-            labels.append(labels_in_image)
-        return matched_idxs, labels
 
     def motif_rel_fg_bg_sampling(self, device, tgt_rel_matrix, ious, is_match, rel_possibility):
         """
@@ -257,7 +239,7 @@ class RelationHead(nn.Module):
 
         union_vis_features = self.relation_roi_pool(features, union_proposals, image_shapes)
         union_features = union_vis_features + rect_features
-        union_features = self.feature_extractor(union_features)
+        # union_features = self.feature_extractor(union_features)
 
         return union_features
 

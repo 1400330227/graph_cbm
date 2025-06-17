@@ -144,21 +144,31 @@ class BoxHead(torch.nn.Module):
     ):
         device = class_logits.device
         num_classes = class_logits.shape[-1]
+        num_classes_no_bg = num_classes - 1
         boxes_per_image = [boxes_in_image.shape[0] for boxes_in_image in proposals]
         pred_boxes = self.box_coder.decode(box_regression, proposals)
         pred_scores = F.softmax(class_logits, -1)
         pred_boxes_list = pred_boxes.split(boxes_per_image, 0)
         pred_scores_list = pred_scores.split(boxes_per_image, 0)
+        class_logits_list = class_logits.split(boxes_per_image, 0)
         all_boxes = []
         all_scores = []
         all_labels = []
-        for boxes, scores, image_shape in zip(pred_boxes_list, pred_scores_list, image_shapes):
+        all_logits = []
+        for boxes, logits, scores, image_shape in zip(pred_boxes_list, class_logits_list, pred_scores_list,
+                                                      image_shapes):
             boxes = box_ops.clip_boxes_to_image(boxes, image_shape)
             labels = torch.arange(num_classes, device=device)
             labels = labels.view(1, -1).expand_as(scores)
             boxes = boxes[:, 1:]
             scores = scores[:, 1:]
             labels = labels[:, 1:]
+            logits = logits[:, 1:]
+
+            n_proposals = scores.shape[0]
+            image_inds = torch.arange(n_proposals, device=device)
+            image_inds = image_inds.view(-1, 1).expand(n_proposals, num_classes_no_bg).reshape(-1)
+
             boxes = boxes.reshape(-1, 4)
             scores = scores.reshape(-1)
             labels = labels.reshape(-1)
@@ -166,13 +176,17 @@ class BoxHead(torch.nn.Module):
             boxes, scores, labels = boxes[inds], scores[inds], labels[inds]
             keep = box_ops.remove_small_boxes(boxes, min_size=1.)
             boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
+
+            logits = logits[image_inds[inds]]
+
             keep = box_ops.batched_nms(boxes, scores, labels, self.nms_thresh)
             keep = keep[:self.detection_per_img]
-            boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
+            boxes, logits, scores, labels = boxes[keep], logits[keep], scores[keep], labels[keep]
             all_boxes.append(boxes)
             all_scores.append(scores)
             all_labels.append(labels)
-        return all_boxes, all_scores, all_labels
+            all_logits.append(logits)
+        return all_boxes, all_scores, all_labels, all_logits
 
     def forward(self, features, proposals, image_shapes, targets=None):
         if targets is not None:
@@ -186,13 +200,13 @@ class BoxHead(torch.nn.Module):
             box_features = self.box_roi_pool(features, proposals, image_shapes)
             box_features = self.feature_extractor(box_features)
             class_logits, box_regression = self.box_predictor(box_features)
-            boxes, scores, labels = self.postprocess_detections(
+            boxes, scores, labels, logits = self.postprocess_detections(
                 class_logits,
                 box_regression,
                 proposals,
                 image_shapes
             )
-            result = [{"boxes": b, "labels": l, "scores": s} for b, l, s in zip(boxes, labels, scores)]
+            result = [{"boxes": b, "labels": l, "scores": s, "logits": i} for b, l, s, i in zip(boxes, labels, scores, logits)]
             return box_features, result, losses
 
         if self.training:

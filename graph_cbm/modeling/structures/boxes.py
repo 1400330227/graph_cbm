@@ -186,3 +186,9 @@ def box_union(boxes1, boxes2):
     rb = torch.max(boxes1[:, 2:], boxes2[:, 2:])
     union_box = torch.cat((lt, rb), dim=1)
     return union_box
+
+def center_x(proposals):
+    boxes = torch.concat([p.bbox for p in proposals], dim=0)
+    c_x = 0.5 * (boxes[:, 0] + boxes[:, 2])
+    return c_x.view(-1)
+

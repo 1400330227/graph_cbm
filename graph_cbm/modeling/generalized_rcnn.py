@@ -98,7 +98,8 @@ class FastRCNNPredictor(nn.Module):
 
 def build_detection_model(
         backbone,
-        num_classes=None,
+        num_classes,
+        num_rel_cls,
         min_size=800,
         max_size=1333,
         image_mean=None,
@@ -197,7 +198,10 @@ def build_detection_model(
         box_score_thresh=box_score_thresh,  # 0.05
         box_nms_thresh=box_nms_thresh,  # 0.5
         box_detections_per_img=box_detections_per_img,  # 100
+        representation_size=representation_size,
         relation_on=relation_on,
+        obj_classes=num_classes,
+        num_rel_cls=num_rel_cls,
     )
 
     if image_mean is None:
