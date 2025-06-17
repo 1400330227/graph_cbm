@@ -43,7 +43,7 @@ class GeneralizedRCNN(nn.Module):
                     raise ValueError("Expected target boxes to be of type "
                                      "Tensor, got {:}.".format(type(boxes)))
 
-        original_image_sizes = torch.jit.annotate(List[Tuple[int, int]], [])
+        original_image_sizes = []
         for img in images:
             val = img.shape[-2:]
             assert len(val) == 2

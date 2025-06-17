@@ -1,7 +1,7 @@
 import torch
 import math
 from typing import List, Tuple
-from torch import Tensor
+from torch import Tensor, nn
 
 
 class BalancedPositiveNegativeSampler(object):
@@ -408,3 +408,16 @@ def smooth_l1_loss(input, target, beta: float = 1. / 9, size_average: bool = Tru
     if size_average:
         return loss.mean()
     return loss.sum()
+
+
+def roi_relation_loss(proposals, rel_labels, relation_logits, refine_obj_logits):
+    criterion_loss = nn.CrossEntropyLoss()
+    relation_logits = torch.concat(relation_logits, dim=0)
+    refine_obj_logits = torch.concat(refine_obj_logits, dim=0)
+
+    fg_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
+    rel_labels = torch.concat(rel_labels, dim=0)
+
+    loss_relation = criterion_loss(relation_logits, rel_labels.long())
+    loss_refine_obj = criterion_loss(refine_obj_logits, fg_labels.long())
+    return loss_relation, loss_refine_obj

@@ -4,6 +4,7 @@ from torch import nn
 
 from graph_cbm.modeling.roi_heads.roi_relation_predictors import build_roi_relation_predictor
 from graph_cbm.modeling.structures import boxes as box_ops, det_utils
+from graph_cbm.modeling.structures.det_utils import roi_relation_loss
 
 
 class RelationHead(nn.Module):
@@ -55,7 +56,6 @@ class RelationHead(nn.Module):
             num_rel_cls,
             representation_size
         )
-
 
     def motif_rel_fg_bg_sampling(self, device, tgt_rel_matrix, ious, is_match, rel_possibility):
         """
@@ -254,18 +254,18 @@ class RelationHead(nn.Module):
             union_features = self.union_feature_extractor(features, proposals, rel_pair_idxs, image_shapes)
         else:
             union_features = None
-        refine_logits, relation_logits, add_losses = self.predictor(
-            proposals,
-            rel_pair_idxs,
-            rel_labels,
-            rel_binarys,
-            roi_features,
-            union_features
+        refine_logits, relation_logits = self.predictor(
+            proposals=proposals,
+            rel_pair_idxs=rel_pair_idxs,
+            roi_features=roi_features,
+            union_features=union_features,
         )
         if not self.training:
             result = self.post_processor((relation_logits, refine_logits), rel_pair_idxs, proposals)
             return roi_features, result, {}
-        loss_relation, loss_refine = self.loss_evaluator(proposals, rel_labels, relation_logits, refine_logits)
+        loss_relation, loss_refine = roi_relation_loss(proposals, rel_labels, relation_logits, refine_logits)
         output_losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine)
-        output_losses.update(add_losses)
         return roi_features, proposals, output_losses
+
+
+

@@ -37,7 +37,7 @@ class RoIRelationPredictor(nn.Module):
         self.post_cat = nn.Linear(self.hidden_dim * 2, self.representation_size)
         self.rel_compress = nn.Linear(self.representation_size, num_rel_cls)
 
-    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
+    def forward(self, proposals, rel_pair_idxs, roi_features, union_features):
         obj_dists, obj_preds, edge_ctx = self.context_layer(roi_features, proposals)
         edge_rep = self.post_emb(edge_ctx)
         edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim)
@@ -61,13 +61,13 @@ class RoIRelationPredictor(nn.Module):
         pair_pred = torch.cat(pair_preds, dim=0)
 
         prod_rep = self.post_cat(prod_rep)
-        prod_rep = prod_rep * union_features
+        prod_rep = prod_rep * self.feature_extractor(union_features)
         rel_dists = self.rel_compress(prod_rep)
         # rel_dists = rel_dists + self.freq_bias.index_with_labels(pair_pred.long())
 
         obj_dists = obj_dists.split(num_objs, dim=0)
         rel_dists = rel_dists.split(num_rels, dim=0)
-        return obj_dists, rel_dists, {}
+        return obj_dists, rel_dists
 
 
 def build_roi_relation_predictor(
