@@ -13,18 +13,27 @@ from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, Gr
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-def create_model(num_classes, load_pretrain_weights=False):
+def create_model(
+        num_classes,
+        load_pretrain_weights=True,
+        relation_on=False,
+):
     cfg = CfgNode({
-        'pretrain_path': "checkpoints/backbone/resnet50.pth",
+        'pretrain_path': "",
         'norm_layer': torch.nn.BatchNorm2d,
         'trainable_layers': 3,
         'extra_blocks': None,
         'returned_layers': None,
     })
     backbone = build_resnet50_backbone(cfg)
-    model = build_detection_model(backbone=backbone, num_classes=num_classes, num_rel_cls=51)
+    model = build_detection_model(
+        backbone=backbone,
+        num_classes=num_classes,
+        num_rel_cls=51,
+        relation_on=relation_on,
+    )
     if load_pretrain_weights:
-        weights_dict = torch.load("./backbone/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
+        weights_dict = torch.load("checkpoints/fasterrcnn_resnet50_fpn.pth", map_location='cpu')
         missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
         if len(missing_keys) != 0 or len(unexpected_keys) != 0:
             print("missing_keys: ", missing_keys)
@@ -156,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
-    parser.add_argument('--epochs', default=15, type=int, metavar='N', help='number of total epochs to run')
+    parser.add_argument('--epochs', default=2000, type=int, metavar='N', help='number of total epochs to run')
     parser.add_argument('--lr', default=0.01, type=float,
                         help='initial learning rate, 0.02 is the default value for training '
                              'on 8 gpus and 2 images_per_gpu')
@@ -165,7 +174,7 @@ if __name__ == "__main__":
     parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)',
                         dest='weight_decay')
-    parser.add_argument('--batch_size', default=2, type=int, metavar='N',
+    parser.add_argument('--batch_size', default=16, type=int, metavar='N',
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")

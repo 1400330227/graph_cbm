@@ -226,6 +226,6 @@ class BoxHead(torch.nn.Module):
                 "loss_box_reg": loss_box_reg
             }
         else:
-            boxes, scores, labels = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
+            boxes, scores, labels, _ = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
             result = [{"boxes": b, "labels": l, "scores": s} for b, l, s in zip(boxes, labels, scores)]
         return box_features, result, losses
