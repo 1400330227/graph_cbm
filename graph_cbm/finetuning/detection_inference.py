@@ -2,8 +2,8 @@ import cv2
 import numpy as np
 import torch
 from matplotlib import patches, pyplot as plt
-from graph_cbm.detection.backbone import build_resnet50_backbone
-from graph_cbm.detection.faster_rcnn import FasterRCNN
+from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
+from graph_cbm.modeling.detection.faster_rcnn import FasterRCNN
 
 
 def create_model(num_classes=91, load_pretrain_weights=False):

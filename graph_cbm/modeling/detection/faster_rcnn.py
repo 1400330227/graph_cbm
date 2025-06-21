@@ -3,9 +3,9 @@ from torchvision.models.detection.faster_rcnn import TwoMLPHead, FastRCNNPredict
 from torchvision.models.detection.rpn import RPNHead, RegionProposalNetwork
 from torchvision.ops import MultiScaleRoIAlign
 
-from graph_cbm.detection.generalized_rcnn import GeneralizedRCNN
-from graph_cbm.detection.roi_heads import RoIHeads
-from graph_cbm.detection.transform import GeneralizedRCNNTransform
+from graph_cbm.modeling.detection.generalized_rcnn import GeneralizedRCNN
+from graph_cbm.modeling.detection.roi_heads import RoIHeads
+from graph_cbm.modeling.detection.transform import GeneralizedRCNNTransform
 
 
 class FasterRCNN(GeneralizedRCNN):
