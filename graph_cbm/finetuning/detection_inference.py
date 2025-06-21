@@ -27,7 +27,7 @@ def img_transform(img):
     return img
 
 
-def inference(img, model, detection_threshold=0.70):
+def inference(img, model, detection_threshold=0.10):
     '''
     Infernece of a single input image
 
@@ -44,7 +44,7 @@ def inference(img, model, detection_threshold=0.70):
     model.eval()
 
     img = img.to(device)
-    outputs = model([img])
+    outputs, _ = model([img])
 
     boxes = outputs[0]['boxes'].data.cpu().numpy()
     scores = outputs[0]['scores'].data.cpu().numpy()

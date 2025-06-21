@@ -1,10 +1,10 @@
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import TwoMLPHead, FastRCNNPredictor
-from torchvision.models.detection.roi_heads import RoIHeads
 from torchvision.models.detection.rpn import RPNHead, RegionProposalNetwork
 from torchvision.ops import MultiScaleRoIAlign
 
 from graph_cbm.detection.generalized_rcnn import GeneralizedRCNN
+from graph_cbm.detection.roi_heads import RoIHeads
 from graph_cbm.detection.transform import GeneralizedRCNNTransform
 
 

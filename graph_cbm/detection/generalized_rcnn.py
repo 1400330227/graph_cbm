@@ -39,5 +39,4 @@ class GeneralizedRCNN(nn.Module):
 
         if self.training:
             return losses
-
-        return detections
+        return detections, features
