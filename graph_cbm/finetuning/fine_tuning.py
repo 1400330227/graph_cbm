@@ -97,7 +97,7 @@ def plot_image(img, boxes, scores, labels, dataset, save_path=None):
     plt.show()
 
 
-img = cv2.imread("./input.jpg")
+img = cv2.imread("./2007_002293.jpg")
 plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
 img = img_transform(img)
