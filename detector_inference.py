@@ -4,7 +4,7 @@ import torch
 from matplotlib import patches, pyplot as plt
 
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
-from graph_cbm.modeling.detection.faster_rcnn import FasterRCNN
+from graph_cbm.modeling.detection.detector import FasterRCNN
 
 
 def create_detector_model(num_classes=91, load_pretrain_weights=False):
@@ -46,7 +46,7 @@ def inference(img, model, detection_threshold=0.50):
     model.eval()
 
     img = img.to(device)
-    outputs, _, _ = model([img])
+    outputs, _, _, _ = model([img])
 
     boxes = outputs[0]['boxes'].data.cpu().numpy()
     scores = outputs[0]['scores'].data.cpu().numpy()
