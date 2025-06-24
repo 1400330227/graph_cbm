@@ -22,7 +22,7 @@ class GeneralizedRCNN(nn.Module):
             self,
             images: list[torch.Tensor],
             targets: Optional[list[dict[str, torch.Tensor]]] = None,
-    ) -> tuple[dict[str, torch.Tensor,], list[dict[str, torch.Tensor]]]:
+    ) -> tuple[dict[str, torch.Tensor,], list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
         original_image_sizes: list[tuple[int, int]] = []
         for img in images:
             val = img.shape[-2:]
@@ -39,4 +39,4 @@ class GeneralizedRCNN(nn.Module):
 
         if self.training:
             return losses
-        return detections, features
+        return detections, features, images

@@ -7,17 +7,18 @@ from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.faster_rcnn import FasterRCNN
 
 
-def create_model(num_classes=91, load_pretrain_weights=False):
+def create_detector_model(num_classes=91, load_pretrain_weights=False):
     backbone = build_resnet50_backbone(pretrained=False)
     model = FasterRCNN(backbone=backbone, num_classes=num_classes)
     if load_pretrain_weights:
-        weights_dict = torch.load("./fasterrcnn_resnet50_fpn_coco-258fb6c6.pth", map_location='cpu', weights_only=True)
+        weights_dict = torch.load("./graph_cbm/finetuning/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth",
+                                  map_location='cpu', weights_only=True)
         model.load_state_dict(weights_dict, strict=False)
     return model
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-model = create_model(load_pretrain_weights=True)
+model = create_detector_model(load_pretrain_weights=True)
 model = model.to(device)
 
 
@@ -45,7 +46,7 @@ def inference(img, model, detection_threshold=0.50):
     model.eval()
 
     img = img.to(device)
-    outputs, _ = model([img])
+    outputs, _, _ = model([img])
 
     boxes = outputs[0]['boxes'].data.cpu().numpy()
     scores = outputs[0]['scores'].data.cpu().numpy()
@@ -108,17 +109,18 @@ def plot_image(img, boxes, scores, labels, dataset, save_path=None):
     plt.show()
 
 
-img = cv2.imread("./2007_002293.jpg")
-plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+if __name__ == "__main__":
+    img = cv2.imread("./graph_cbm/finetuning/2007_002293.jpg")
+    plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
-img = img_transform(img)
-boxes, scores, labels = inference(img, model)
+    img = img_transform(img)
+    boxes, scores, labels = inference(img, model)
 
-with open("./coco_labels.txt", "r") as coco:
-    COCO_LABELS = coco.readlines()
+    with open("./graph_cbm/finetuning/coco_labels.txt", "r") as coco:
+        COCO_LABELS = coco.readlines()
 
-for i, _ in enumerate(COCO_LABELS):
-    COCO_LABELS[i] = COCO_LABELS[i].replace("\n", "")
+    for i, _ in enumerate(COCO_LABELS):
+        COCO_LABELS[i] = COCO_LABELS[i].replace("\n", "")
 
-img = img.cpu().permute(1, 2, 0).numpy()
-plot_image(img, boxes, scores, labels, COCO_LABELS)
+    img = img.cpu().permute(1, 2, 0).numpy()
+    plot_image(img, boxes, scores, labels, COCO_LABELS)

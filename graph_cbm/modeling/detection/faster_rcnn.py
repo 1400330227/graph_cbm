@@ -43,6 +43,8 @@ class FasterRCNN(GeneralizedRCNN):
             box_batch_size_per_image=512,
             box_positive_fraction=0.25,
             bbox_reg_weights=None,
+            # box_predictor
+            representation_dim=1024,
             **kwargs,
     ):
         out_channels = backbone.out_channels
@@ -70,12 +72,12 @@ class FasterRCNN(GeneralizedRCNN):
             box_roi_pool = MultiScaleRoIAlign(featmap_names=["0", "1", "2", "3"], output_size=7, sampling_ratio=2)
         if box_head is None:
             resolution = box_roi_pool.output_size[0]
-            representation_size = 1024
-            box_head = TwoMLPHead(out_channels * resolution ** 2, representation_size)
+            # representation_dim = 1024
+            box_head = TwoMLPHead(out_channels * resolution ** 2, representation_dim)
 
         if box_predictor is None:
-            representation_size = 1024
-            box_predictor = FastRCNNPredictor(representation_size, num_classes)
+            # representation_dim = 1024
+            box_predictor = FastRCNNPredictor(representation_dim, num_classes)
         roi_heads = RoIHeads(
             # Box
             box_roi_pool,

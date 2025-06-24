@@ -1,46 +1,28 @@
 import os
 import datetime
-
 import torch
-
 from datasets import transforms
 from datasets.voc_dataset import VOCDataSet
-from graph_cbm.modeling.backbone.backbone import build_resnet50_backbone
-from graph_cbm.modeling.generalized_rcnn import build_detection_model, FastRCNNPredictor
-from graph_cbm.modeling.structures.cfg_node import CfgNode
+from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
+from graph_cbm.modeling.detection.faster_rcnn import FasterRCNN
+from graph_cbm.modeling.graph import Graph
+from graph_cbm.modeling.prediction.predictor import Predictor
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
+weights_path = "./graph_cbm/finetuning/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
 
-def create_model(
-        num_classes,
-        load_pretrain_weights=True,
-        relation_on=False,
-):
-    cfg = CfgNode({
-        'pretrained': False,
-        'pretrain_path': "",
-        'norm_layer': torch.nn.BatchNorm2d,
-        'trainable_layers': 3,
-        'extra_blocks': None,
-        'returned_layers': None,
-    })
-    backbone = build_resnet50_backbone(cfg)
-    model = build_detection_model(
-        backbone=backbone,
-        num_classes=num_classes,
-        num_rel_cls=51,
-        relation_on=relation_on,
-    )
-    if load_pretrain_weights:
-        weights_dict = torch.load("checkpoints/fasterrcnn_resnet50_fpn.pth", map_location='cpu')
-        missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
-        if len(missing_keys) != 0 or len(unexpected_keys) != 0:
-            print("missing_keys: ", missing_keys)
-            print("unexpected_keys: ", unexpected_keys)
-    in_features = model.roi_heads.box.box_predictor.cls_score.in_features
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+
+def create_model(num_classes, relation_classes):
+    backbone = build_resnet50_backbone(pretrained=False)
+    detector = FasterRCNN(backbone=backbone, num_classes=num_classes)
+    weights_dict = torch.load("./graph_cbm/finetuning/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth",
+                              map_location='cpu', weights_only=True)
+    detector.load_state_dict(weights_dict, strict=False)
+
+    predictor = Predictor(num_classes, relation_classes, detector.roi_heads.box_head)
+    model = Graph(detector, predictor)
     return model
 
 
@@ -91,7 +73,7 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(num_classes=args.num_classes + 1, relation_on=True)
+    model = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
     model.to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
@@ -163,6 +145,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
+    parser.add_argument('--relation-classes', default=50, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')

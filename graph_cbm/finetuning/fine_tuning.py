@@ -17,7 +17,7 @@ def img_transform(img):
     return img
 
 
-def inference(img, model, detection_threshold=0.70):
+def inference(img, model, detection_threshold=0.50):
     '''
     Infernece of a single input image
 

@@ -708,7 +708,7 @@ class RoIHeads(nn.Module):
             boxes = boxes[:, 1:]
             scores = scores[:, 1:]
             labels = labels[:, 1:]
-            logits = logits[:, 1:]
+            logits = logits[:, :]
 
             n_proposals = scores.shape[0]
             image_inds = torch.arange(n_proposals, device=device)
