@@ -46,7 +46,7 @@ def inference(img, model, detection_threshold=0.50):
     model.eval()
 
     img = img.to(device)
-    outputs, _, _, _ = model([img])
+    outputs = model([img])
 
     boxes = outputs[0]['boxes'].data.cpu().numpy()
     scores = outputs[0]['scores'].data.cpu().numpy()

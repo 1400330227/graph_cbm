@@ -48,7 +48,8 @@ class Predictor(nn.Module):
         self.obj_embed2 = nn.Embedding(self.obj_classes, embedding_dim)
 
         self.obj_encoder = TransformerEncoder(representation_dim + embedding_dim, num_heads, 2, hidden_dim)
-        self.edge_encoder = TransformerEncoder(representation_dim + embedding_dim + hidden_dim, num_heads, 2, hidden_dim)
+        self.edge_encoder = TransformerEncoder(representation_dim + embedding_dim + hidden_dim, num_heads, 2,
+                                               hidden_dim)
 
         self.obj_classifier = nn.Linear(hidden_dim, obj_classes)
         self.edge_classifier = nn.Linear(self.representation_dim, relation_classes)
@@ -106,8 +107,11 @@ class Predictor(nn.Module):
         obj_logits = obj_logits.split(num_objs, dim=0)
         rel_logits = rel_logits.split(num_rels, dim=0)
 
+        result = [{"obj_logits": o, "rel_logits": r, "rel_pair_idxs": l}
+                  for o, r, l in zip(obj_logits, rel_logits, rel_pair_idxs)]
+
         if self.training:
             loss_relation, loss_refine = relation_loss(proposals, rel_labels, rel_logits, obj_logits)
             predictor_losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine)
-            return rel_logits, obj_logits, predictor_losses
-        return rel_logits, obj_logits, {}
+            return result, predictor_losses
+        return result, {}

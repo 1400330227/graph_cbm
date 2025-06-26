@@ -2,7 +2,7 @@ import torch
 import numpy.random as npr
 from torchvision.ops import boxes as box_ops
 from torch import nn
-from graph_cbm.modeling.detection.faster_rcnn import FasterRCNN
+from graph_cbm.modeling.detection.detector import FasterRCNN
 from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.modeling.prediction.predictor import Predictor
 from graph_cbm.modeling.structures.boxes import box_union
@@ -13,12 +13,21 @@ class Graph(nn.Module):
             self,
             detector: FasterRCNN,
             predictor: Predictor,
+            batch_size_per_image=1024,
+            positive_fraction=0.25,
+            num_sample_per_gt_rel=4,
+            fg_thres=0.5,
     ):
         super().__init__()
         self.box_roi_pool = detector.roi_heads.box_roi_pool
         # self.box_head = detector.roi_heads.box_head
         self.detector = detector
         self.predictor = predictor
+        self.batch_size_per_image = batch_size_per_image
+        self.positive_fraction = positive_fraction
+        self.fg_thres = fg_thres
+        self.num_pos_per_img = int(batch_size_per_image * positive_fraction)
+        self.num_sample_per_gt_rel = num_sample_per_gt_rel
 
         resolution = self.box_roi_pool.output_size[0]
         in_channels = detector.backbone.out_channels
@@ -134,24 +143,22 @@ class Graph(nn.Module):
         return torch.concat((fg_rel_triplets, bg_rel_triplets), dim=0), binary_rel
 
     def select_training_samples(self, proposals, targets):
-        device = proposals[0].device
-
+        device = proposals[0]["boxes"].device
         rel_idx_pairs = []
         rel_labels = []
         rel_sym_binarys = []
         for img_id, (proposal, target) in enumerate(zip(proposals, targets)):
-            device = proposal.bbox.device
-            prp_box = proposal.bbox
-            prp_lab = proposal.get_field("labels").long()
-            tgt_box = target.bbox
-            tgt_lab = target.get_field("labels").long()
-            tgt_rel_matrix = target.get_field("relation")  # [tgt, tgt]
+            prp_box = proposal["boxes"]
+            prp_lab = proposal["labels"].long()
+            tgt_box = target["boxes"]
+            tgt_lab = target["labels"].long()
+            tgt_rel_matrix = target["relation"]  # [tgt, tgt]
             # IoU matching
             # ious = boxlist_iou(target, proposal)  # [tgt, prp]
-            ious = box_ops.box_iou(target, proposal)
+            ious = box_ops.box_iou(tgt_box, prp_box)
             is_match = (tgt_lab[:, None] == prp_lab[None]) & (ious > self.fg_thres)  # [tgt, prp]
             # Proposal self IoU to filter non-overlap
-            prp_self_iou = box_ops.box_iou(proposal, proposal)  # [prp, prp]
+            prp_self_iou = box_ops.box_iou(prp_box, prp_box)  # [prp, prp]
 
             num_prp = prp_box.shape[0]
             rel_possibility = (torch.ones((num_prp, num_prp), device=device).long() -
@@ -160,13 +167,8 @@ class Graph(nn.Module):
             rel_possibility[prp_lab == 0] = 0
             rel_possibility[:, prp_lab == 0] = 0
 
-            img_rel_triplets, binary_rel = self.motif_rel_fg_bg_sampling(
-                device,
-                tgt_rel_matrix,
-                ious,
-                is_match,
-                rel_possibility
-            )
+            img_rel_triplets, binary_rel = self.motif_rel_fg_bg_sampling(device, tgt_rel_matrix, ious, is_match,
+                                                                         rel_possibility)
             rel_idx_pairs.append(img_rel_triplets[:, :2])  # (num_rel, 2),  (sub_idx, obj_idx)
             rel_labels.append(img_rel_triplets[:, 2])  # (num_rel, )
             rel_sym_binarys.append(binary_rel)
@@ -239,7 +241,7 @@ class Graph(nn.Module):
         roi_features = self.box_roi_pool(features, [t["boxes"] for t in proposals], images.image_sizes)
         union_features = self.union_feature_extractor(images, features, proposals, rel_pair_idxs)
 
-        refine_logits, relation_logits, predictor_losses = self.predictor(
+        relation_graph, predictor_losses = self.predictor(
             roi_features,
             proposals,
             rel_pair_idxs,
@@ -249,4 +251,4 @@ class Graph(nn.Module):
 
         if self.training:
             return predictor_losses
-        return refine_logits, relation_logits
+        return relation_graph

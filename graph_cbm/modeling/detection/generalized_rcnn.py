@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union, Any
 
 import torch
 from torch import nn
@@ -22,7 +22,9 @@ class GeneralizedRCNN(nn.Module):
             self,
             images: list[torch.Tensor],
             targets: Optional[list[dict[str, torch.Tensor]]] = None,
-    ) -> tuple[dict[str, torch.Tensor,], list[dict[str, torch.Tensor]], list[dict[str, torch.Tensor]]]:
+    ) -> Union[tuple[list[dict[str, torch.Tensor]], dict[str, torch.Tensor], Any], dict[str, torch.Tensor], list[
+        dict[str, torch.Tensor]]]:
+
         original_image_sizes: list[tuple[int, int]] = []
         for img in images:
             val = img.shape[-2:]
@@ -33,10 +35,12 @@ class GeneralizedRCNN(nn.Module):
         detections, detector_losses = self.roi_heads(features, proposals, images.image_sizes, targets)
         detections = self.transform.postprocess(detections, images.image_sizes, original_image_sizes)
 
-        losses = {}
-        losses.update(detector_losses)
-        losses.update(proposal_losses)
+        if self.roi_heads.use_relation:
+            return detections, features, images
 
+        losses = {}
         if self.training:
+            losses.update(detector_losses)
+            losses.update(proposal_losses)
             return losses
-        return detections, features, images
+        return detections

@@ -3,24 +3,29 @@ import numpy as np
 import torch
 
 from detector_inference import create_detector_model
+from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
+from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.modeling.graph import Graph
 from graph_cbm.modeling.prediction.predictor import Predictor
 
 
-def create_model():
-    detector = create_detector_model(load_pretrain_weights=True)
+def create_model(num_classes, relation_classes):
+    backbone = build_resnet50_backbone(pretrained=False)
+    weights_path = "./graph_cbm/finetuning/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
+    detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
+
     predictor = Predictor(
-        obj_classes=91,
-        relation_classes=51,
+        obj_classes=num_classes,
+        relation_classes=relation_classes,
         feature_extractor=detector.roi_heads.box_head,
     )
     model = Graph(detector, predictor)
     return model
 
 
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+device = torch.device('cuda:1') if torch.cuda.is_available() else torch.device('cpu')
 
-model = create_model()
+model = create_model(21, 51)
 model = model.to(device)
 
 

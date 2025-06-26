@@ -1,3 +1,4 @@
+import torch
 from torchvision.models.detection.anchor_utils import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import TwoMLPHead, FastRCNNPredictor
 from torchvision.models.detection.rpn import RPNHead, RegionProposalNetwork
@@ -45,6 +46,8 @@ class FasterRCNN(GeneralizedRCNN):
             bbox_reg_weights=None,
             # box_predictor
             representation_dim=1024,
+            # Relation
+            use_relation=False,
             **kwargs,
     ):
         out_channels = backbone.out_channels
@@ -91,6 +94,7 @@ class FasterRCNN(GeneralizedRCNN):
             box_score_thresh,
             box_nms_thresh,
             box_detections_per_img,
+            use_relation,
         )
         if image_mean is None:
             image_mean = [0.485, 0.456, 0.406]
@@ -99,3 +103,12 @@ class FasterRCNN(GeneralizedRCNN):
         transform = GeneralizedRCNNTransform(min_size, max_size, image_mean, image_std, **kwargs)
         super().__init__(backbone, rpn, roi_heads, transform)
 
+
+def build_detector(backbone, num_classes, weights_path="", use_relation=False):
+    model = FasterRCNN(backbone=backbone, num_classes=91, use_relation=use_relation)
+    if weights_path != "":
+        weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
+        model.load_state_dict(weights_dict, strict=False)
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+    return model
