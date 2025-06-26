@@ -5,7 +5,7 @@ from torch import nn
 from graph_cbm.modeling.detection.detector import FasterRCNN
 from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.modeling.prediction.predictor import Predictor
-from graph_cbm.modeling.structures.boxes import box_union
+from graph_cbm.utils.boxes import box_union
 
 
 class Graph(nn.Module):
