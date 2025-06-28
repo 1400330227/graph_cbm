@@ -2,11 +2,10 @@ import cv2
 import numpy as np
 import torch
 
-from detector_inference import create_detector_model
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph import Graph
-from graph_cbm.modeling.prediction.predictor import Predictor
+from graph_cbm.modeling.graph_cbm import GraphCBM
+from graph_cbm.modeling.relation.predictor import Predictor
 
 
 def create_model(num_classes, relation_classes):
@@ -19,7 +18,7 @@ def create_model(num_classes, relation_classes):
         relation_classes=relation_classes,
         feature_extractor=detector.roi_heads.box_head,
     )
-    model = Graph(detector, predictor)
+    model = GraphCBM(detector, predictor)
     return model
 
 
@@ -43,10 +42,11 @@ img = img_transform(img)
 def inference(img, model):
     model.eval()
 
-    img = img.to(device)
-    outputs = model([img, img])
+    with torch.no_grad():
+        img = img.to(device)
+        outputs = model([img, img])
 
-    return outputs
+        return outputs
 
 
 if __name__ == "__main__":

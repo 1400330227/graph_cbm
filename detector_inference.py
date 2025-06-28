@@ -45,18 +45,18 @@ def inference(img, model, detection_threshold=0.50):
     '''
     model.eval()
 
-    img = img.to(device)
-    outputs = model([img])
+    with torch.no_grad():
+        img = img.to(device)
+        outputs = model([img])
+        boxes = outputs[0]['boxes'].data.cpu().numpy()
+        scores = outputs[0]['scores'].data.cpu().numpy()
+        labels = outputs[0]['labels'].data.cpu().numpy()
 
-    boxes = outputs[0]['boxes'].data.cpu().numpy()
-    scores = outputs[0]['scores'].data.cpu().numpy()
-    labels = outputs[0]['labels'].data.cpu().numpy()
+        boxes = boxes[scores >= detection_threshold].astype(np.int32)
+        labels = labels[scores >= detection_threshold]
+        scores = scores[scores >= detection_threshold]
 
-    boxes = boxes[scores >= detection_threshold].astype(np.int32)
-    labels = labels[scores >= detection_threshold]
-    scores = scores[scores >= detection_threshold]
-
-    return boxes, scores, labels
+        return boxes, scores, labels
 
 
 def plot_image(img, boxes, scores, labels, dataset, save_path=None):

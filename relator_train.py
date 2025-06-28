@@ -6,7 +6,8 @@ from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.modeling.graph import Graph
-from graph_cbm.modeling.prediction.predictor import Predictor
+from graph_cbm.modeling.graph_cbm import GraphCBM
+from graph_cbm.modeling.relation.predictor import Predictor
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
@@ -15,19 +16,21 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 # weights_path = "./checkpoints/fasterrcnn_resnet50_fpn.pth"
 
 
-def create_model(num_classes, relation_classes):
+def create_model(num_classes, relation_classes, n_tasks=200):
     backbone = build_resnet50_backbone(pretrained=False)
     weights_path = "./graph_cbm/finetuning/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
     detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
 
     predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes, feature_extractor=detector.roi_heads.box_head)
 
-    model = Graph(detector, predictor)
+    graph = Graph(num_classes, relation_classes)
+
+    model = GraphCBM(detector, predictor, graph, n_tasks)
     return model
 
 
 def main(args):
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("Using {} device training.".format(device.type))
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     data_transform = {

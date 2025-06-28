@@ -1,7 +1,7 @@
 import torchvision.models
 from torchvision.models.feature_extraction import create_feature_extractor
-from graph_cbm.modeling.backbone.fpn import LastLevelMaxPool, BackboneWithFPN
-from graph_cbm.modeling.structures.cfg_node import CfgNode
+from torchvision.ops.feature_pyramid_network import LastLevelMaxPool
+from graph_cbm.modeling.detection.fpn import LastLevelMaxPool, BackboneWithFPN
 
 
 def build_resnet50_backbone(pretrained):
@@ -87,10 +87,7 @@ def build_vgg_backbone(pretrained):
 
 
 if __name__ == '__main__':
-    cfg = CfgNode({
-        'pretrained': True,
-    })
-    build_resnet50_backbone(cfg)
+    build_resnet50_backbone()
     # cfg = CfgNode({
     #     'pretrain_path': "checkpoints/backbone/resnet50.pth",
     #     'norm_layer': torch.nn.BatchNorm2d,

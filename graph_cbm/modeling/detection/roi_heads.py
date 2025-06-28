@@ -196,7 +196,7 @@ class RoIHeads(nn.Module):
             proposals,  # type: list[Tensor]
             image_shapes,  # type: list[tuple[int, int]]
     ):
-        # type: (...) -> tuple[list[Tensor], list[Tensor], list[Tensor], list[Tensor]]
+        # type: (...) -> tuple[list[Tensor], list[Tensor], list[Tensor], list[Tensor], list[Tensor]]
         device = class_logits.device
         num_classes = class_logits.shape[-1]
         num_classes_no_bg = num_classes - 1
@@ -214,6 +214,7 @@ class RoIHeads(nn.Module):
         all_scores = []
         all_labels = []
         all_logits = []
+        all_logits_boxes = []
         for boxes, logits, scores, image_shape in zip(
                 pred_boxes_list,
                 class_logits_list,
@@ -227,6 +228,7 @@ class RoIHeads(nn.Module):
             labels = labels.view(1, -1).expand_as(scores)
 
             # remove predictions with the background label
+            logits_boxes = boxes[:, :]
             boxes = boxes[:, 1:]
             scores = scores[:, 1:]
             labels = labels[:, 1:]
@@ -244,23 +246,27 @@ class RoIHeads(nn.Module):
             # remove low scoring boxes
             inds = torch.where(scores > self.score_thresh)[0]
             boxes, logits, scores, labels = boxes[inds], logits[image_inds[inds]], scores[inds], labels[inds]
+            logits_boxes = logits_boxes[image_inds[inds]]
 
             # remove empty boxes
             keep = box_ops.remove_small_boxes(boxes, min_size=1e-2)
             boxes, logits, scores, labels = boxes[keep], logits[keep], scores[keep], labels[keep]
+            logits_boxes = logits_boxes[keep]
 
             # non-maximum suppression, independently done per class
             keep = box_ops.batched_nms(boxes, scores, labels, self.nms_thresh)
             # keep only topk scoring predictions
             keep = keep[: self.detections_per_img]
             boxes, logits, scores, labels = boxes[keep], logits[keep], scores[keep], labels[keep]
+            logits_boxes = logits_boxes[keep]
 
             all_boxes.append(boxes)
             all_scores.append(scores)
             all_labels.append(labels)
             all_logits.append(logits)
+            all_logits_boxes.append(logits_boxes)
 
-        return all_boxes, all_scores, all_labels, all_logits
+        return all_boxes, all_scores, all_labels, all_logits, all_logits_boxes
 
     def forward(
             self,
@@ -288,10 +294,10 @@ class RoIHeads(nn.Module):
             box_features = self.box_roi_pool(features, proposals, image_shapes)
             box_features = self.box_head(box_features)
             class_logits, box_regression = self.box_predictor(box_features)
-            boxes, scores, labels, logits = self.postprocess_detections(class_logits, box_regression, proposals,
-                                                                        image_shapes)
-            result = [{"boxes": b, "labels": l, "scores": s, "logits": i}
-                      for b, l, s, i in zip(boxes, labels, scores, logits)]
+            boxes, scores, labels, logits, logits_boxes = self.postprocess_detections(class_logits, box_regression,
+                                                                                      proposals, image_shapes)
+            result = [{"boxes": b, "labels": l, "scores": s, "logits": i, "logits_boxes": j}
+                      for b, l, s, i, j in zip(boxes, labels, scores, logits, logits_boxes)]
             return result, {}
 
         if self.training:
@@ -314,8 +320,8 @@ class RoIHeads(nn.Module):
             loss_classifier, loss_box_reg = fastrcnn_loss(class_logits, box_regression, labels, regression_targets)
             losses = {"loss_classifier": loss_classifier, "loss_box_reg": loss_box_reg}
         else:
-            boxes, scores, labels, logits = self.postprocess_detections(class_logits, box_regression, proposals,
-                                                                        image_shapes)
+            boxes, scores, labels, logits, logits_boxes = self.postprocess_detections(class_logits, box_regression,
+                                                                                      proposals, image_shapes)
             result = [{"boxes": b, "labels": l, "scores": s, "logits": i}
                       for b, l, s, i in zip(boxes, labels, scores, logits)]
         return result, losses
