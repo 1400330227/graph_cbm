@@ -23,9 +23,7 @@ def create_model(num_classes, relation_classes, n_tasks=200):
 
     predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes, feature_extractor=detector.roi_heads.box_head)
 
-    graph = Graph(num_classes, relation_classes)
-
-    model = GraphCBM(detector, predictor, graph, n_tasks)
+    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, True)
     return model
 
 

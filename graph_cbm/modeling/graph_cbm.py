@@ -1,13 +1,74 @@
 import torch
 import numpy.random as npr
 import torch.nn.functional as F
+import torch.nn
 from torchvision.ops import boxes as box_ops
 from torch import nn
 from graph_cbm.modeling.detection.detector import FasterRCNN
 from graph_cbm.modeling.detection.transform import resize_boxes
-from graph_cbm.modeling.graph import Graph
 from graph_cbm.modeling.relation.predictor import Predictor
 from graph_cbm.utils.boxes import box_union
+from torch_geometric.nn import RGCNConv
+
+
+class RGCNConvLayer(torch.nn.Module):
+    def __init__(
+            self,
+            num_nodes,
+            num_relations,
+            input_dim=1280,
+            hidden_dim=512,
+            out_dim=256,
+            num_layers=2,
+            dropout=0.5,
+            num_bases=None
+    ):
+        super().__init__()
+        self.embedding = torch.nn.Embedding(num_nodes, input_dim)
+        self.convs = torch.nn.ModuleList()
+        self.lin_obj = nn.Linear(input_dim, 512)
+        self.convs.append(RGCNConv(512, hidden_dim, num_relations, num_bases))
+        for _ in range(num_layers - 2):
+            self.convs.append(RGCNConv(hidden_dim, hidden_dim, num_relations, num_bases))
+        self.convs.append(RGCNConv(hidden_dim, out_dim, num_relations, num_bases))
+        self.dropout = dropout
+
+    def forward(self, x, edge_index, edge_type):
+        x = self.lin_obj(x)
+        for conv in self.convs[:-1]:
+            x = conv(x, edge_index, edge_type)
+            x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.convs[-1](x, edge_index, edge_type)
+        return x
+
+
+def task_loss(y_logits, y, n_tasks, task_class_weights=None):
+    loss_task = (torch.nn.CrossEntropyLoss(weight=task_class_weights)
+                 if n_tasks > 1 else torch.nn.BCEWithLogitsLoss(weight=task_class_weights))
+    return loss_task(y_logits if y_logits.shape[-1] > 1 else y_logits.reshape(-1), y)
+
+
+class C2yModel(nn.Module):
+    def __init__(self, num_classes, relation_classes, n_tasks):
+        super(C2yModel, self).__init__()
+        self.num_classes = num_classes
+        self.relation_classes = relation_classes
+        self.n_tasks = n_tasks
+        self.features = RGCNConvLayer(num_classes, relation_classes)
+        self.classifier = nn.Sequential(*[
+            nn.Linear(256, 256),
+            nn.Dropout(p=0.5),
+            nn.Linear(256, n_tasks)
+        ])
+
+    def forward(self, x, edge_index, edge_type, targets):
+        x = self.features(x, edge_index, edge_type)
+        y_logits = self.classifier(x)
+        loss = {}
+        if self.training:
+            loss = task_loss(x, targets, self.n_tasks)
+        return y_logits, loss
 
 
 class GraphCBM(nn.Module):
@@ -15,9 +76,10 @@ class GraphCBM(nn.Module):
             self,
             detector: FasterRCNN,
             predictor: Predictor,
-            graph: Graph,
+            num_classes: int,
+            relation_classes: int,
             n_tasks: int,
-            use_graph=False,
+            use_c2ymodel=False,
             batch_size_per_image=1024,
             positive_fraction=0.25,
             num_sample_per_gt_rel=4,
@@ -36,8 +98,7 @@ class GraphCBM(nn.Module):
 
         self.obj_embed = nn.Embedding(self.predictor.obj_classes, self.predictor.embedding_dim)
 
-        self.graph = graph
-        self.use_graph = use_graph
+        self.use_c2ymodel = use_c2ymodel
 
         resolution = self.box_roi_pool.output_size[0]
         in_channels = detector.backbone.out_channels
@@ -52,11 +113,8 @@ class GraphCBM(nn.Module):
             nn.BatchNorm2d(in_channels, momentum=0.01),
         ])
 
-        self.c2y_model = nn.Sequential(
-            torch.nn.Linear(256, 256),
-            torch.nn.Dropout(p=0.5),
-            torch.nn.Linear(256, n_tasks),
-        )
+        if self.use_c2ymodel:
+            self.c2y_model = C2yModel(num_classes, relation_classes, n_tasks)
 
     def motif_rel_fg_bg_sampling(self, device, tgt_rel_matrix, ious, is_match, rel_possibility):
         """
@@ -264,19 +322,19 @@ class GraphCBM(nn.Module):
             union_features,
             rel_labels
         )
-
-        if self.use_graph:
+        losses = {}
+        result = {}
+        losses.update(predictor_losses)
+        result["relation_graph"] = relation_graph
+        if self.use_c2ymodel:
             pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graph], dim=0)
             edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graph], dim=0).permute(1, 0)
             edge_type = torch.concat([relation["rel_labels"] for relation in relation_graph], dim=0)
 
-            pred_labels = self.obj_embed(pred_labels.long())
-            x = torch.concat((box_feature, pred_labels), dim=-1)
-            c = self.graph(x, edge_index, edge_type)
-            y = self.c2y_model(c)
-
-            return y
-
+            x = torch.concat((box_feature, self.obj_embed(pred_labels.long())), dim=-1)
+            y_logits, task_loss = self.c2y_model(x, edge_index, edge_type, targets)
+            losses.update(task_loss)
+            result["y_logits"] = y_logits
         if self.training:
-            return predictor_losses
-        return relation_graph
+            return losses
+        return result
