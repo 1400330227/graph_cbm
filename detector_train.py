@@ -2,6 +2,7 @@ import os
 import datetime
 import torch
 from datasets import transforms
+from datasets.cub_dataset import CubDataset
 from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
@@ -29,10 +30,11 @@ def main(args):
                                      transforms.RandomHorizontalFlip(0.5)]),
         "val": transforms.Compose([transforms.ToTensor()])
     }
-    VOC_root = args.data_path
-    if os.path.exists(os.path.join(VOC_root, "VOCdevkit")) is False:
-        raise FileNotFoundError("VOCdevkit dose not in path:'{}'.".format(VOC_root))
-    train_dataset = VOCDataSet(VOC_root, "2012", data_transform["train"], "train.txt")
+    # VOC_root = args.data_path
+    # if os.path.exists(os.path.join(VOC_root, "VOCdevkit")) is False:
+    #     raise FileNotFoundError("VOCdevkit dose not in path:'{}'.".format(VOC_root))
+    # train_dataset = VOCDataSet(VOC_root, "2012", data_transform["train"], "train.txt")
+    train_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
     train_sampler = None
     if args.aspect_ratio_group_factor >= 0:
         train_sampler = torch.utils.data.RandomSampler(train_dataset)
@@ -58,7 +60,8 @@ def main(args):
             num_workers=nw,
             collate_fn=train_dataset.collate_fn
         )
-    val_dataset = VOCDataSet(VOC_root, "2012", data_transform["val"], "val.txt")
+    # val_dataset = VOCDataSet(VOC_root, "2012", data_transform["val"], "val.txt")
+    val_dataset = CubDataset("data/CUB_200_2011", data_transform["val"], False)
     val_data_set_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size,
@@ -138,7 +141,7 @@ if __name__ == "__main__":
         description=__doc__)
     parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
-    parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
+    parser.add_argument('--num-classes', default=25, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=50, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')

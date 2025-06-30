@@ -5,6 +5,7 @@ import torch
 import json
 from PIL import Image
 from lxml import etree
+from datasets import transforms
 
 
 class VOCDataSet(Dataset):
@@ -236,3 +237,16 @@ class VOCDataSet(Dataset):
         target["image_id"] = image_id
         target["area"] = area
         target["iscrowd"] = iscrowd
+
+
+if __name__ == '__main__':
+    data_transform = {
+        "train": transforms.Compose([transforms.ToTensor(), transforms.RandomHorizontalFlip(0.5)]),
+        "val": transforms.Compose([transforms.ToTensor()])
+    }
+    cub_dataset = VOCDataSet("data", "2012", data_transform["train"], "train.txt")
+
+    train_data_loader = torch.utils.data.DataLoader(cub_dataset, batch_size=2, shuffle=True, collate_fn=cub_dataset.collate_fn)
+
+    for i, (img, target) in enumerate(train_data_loader):
+        print(len(img))
