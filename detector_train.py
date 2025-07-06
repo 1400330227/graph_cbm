@@ -141,7 +141,7 @@ if __name__ == "__main__":
         description=__doc__)
     parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
-    parser.add_argument('--num-classes', default=25, type=int, help='num_classes')
+    parser.add_argument('--num-classes', default=17, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=50, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
