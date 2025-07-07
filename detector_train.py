@@ -2,7 +2,7 @@ import os
 import datetime
 import torch
 from datasets import transforms
-from datasets.cub_dataset import CubDataset
+from datasets.cub_dataset1 import CubDataset
 from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
@@ -16,7 +16,7 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 def create_model(num_classes, relation_classes):
     backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "./graph_cbm/finetuning/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
+    weights_path = "checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
     model = build_detector(backbone, num_classes, weights_path)
     return model
 
@@ -141,7 +141,7 @@ if __name__ == "__main__":
         description=__doc__)
     parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
-    parser.add_argument('--num-classes', default=17, type=int, help='num_classes')
+    parser.add_argument('--num-classes', default=1, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=50, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')

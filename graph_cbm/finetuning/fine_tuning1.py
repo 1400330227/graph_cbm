@@ -9,11 +9,18 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
+
+def get_model_object_detection(num_classes):
+    weight_path = 'checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth'
+    model = torchvision.models.detection.fasterrcnn_resnet50_fpn()
+    model.load_state_dict(torch.load(weight_path, map_location='cpu'))
+    return model
+
+
 num_classes = 91
-model = torchvision.models.detection.fasterrcnn_resnet50_fpn()
-weight_path = 'checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth'
-model.load_state_dict(torch.load(weight_path, map_location='cpu'))
+model = get_model_object_detection(num_classes)
 model = model.to(device)
+
 
 def img_transform(img):
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32)
@@ -114,5 +121,5 @@ with open("graph_cbm/finetuning/coco_labels.txt", "r") as coco:
 for i, _ in enumerate(COCO_LABELS):
     COCO_LABELS[i] = COCO_LABELS[i].replace("\n", "")
 
-img = img.cpu().permute(1,2,0).numpy()
+img = img.cpu().permute(1, 2, 0).numpy()
 plot_image(img, boxes, scores, labels, COCO_LABELS)

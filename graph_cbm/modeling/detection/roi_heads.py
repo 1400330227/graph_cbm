@@ -320,8 +320,7 @@ class RoIHeads(nn.Module):
             loss_classifier, loss_box_reg = fastrcnn_loss(class_logits, box_regression, labels, regression_targets)
             losses = {"loss_classifier": loss_classifier, "loss_box_reg": loss_box_reg}
         else:
-            boxes, scores, labels, logits, logits_boxes = self.postprocess_detections(class_logits, box_regression,
-                                                                                      proposals, image_shapes)
-            result = [{"boxes": b, "labels": l, "scores": s, "logits": i}
-                      for b, l, s, i in zip(boxes, labels, scores, logits)]
+            boxes, scores, labels, _, _ = self.postprocess_detections(class_logits, box_regression,
+                                                                      proposals, image_shapes)
+            result = [{"boxes": b, "labels": l, "scores": s} for b, l, s in zip(boxes, labels, scores)]
         return result, losses

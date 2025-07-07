@@ -8,18 +8,18 @@ from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import FasterRCNN
 
 
-def create_detector_model(num_classes=91, load_pretrain_weights=False):
+def create_detector_model(num_classes, load_pretrain_weights=False):
     backbone = build_resnet50_backbone(pretrained=False)
     model = FasterRCNN(backbone=backbone, num_classes=num_classes)
     if load_pretrain_weights:
-        weights_dict = torch.load("./save_weights/resnet-fpn-model-1299.pth",
-                                  map_location='cpu', weights_only=True)
+        weight_path = "save_weights/resnet-fpn-model-3.pth"
+        weights_dict = torch.load(weight_path, map_location='cpu', weights_only=True)
         model.load_state_dict(weights_dict, strict=False)
     return model
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-model = create_detector_model(load_pretrain_weights=True, num_classes=18)
+model = create_detector_model(load_pretrain_weights=True, num_classes=2)
 model = model.to(device)
 
 
@@ -30,7 +30,7 @@ def img_transform(img):
     return img
 
 
-def inference(img, model, detection_threshold=0.50):
+def inference(img, model, detection_threshold=0.85):
     '''
     Infernece of a single input image
 
