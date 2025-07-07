@@ -70,8 +70,8 @@ class CubDataset(Dataset):
             label = shape["label"]
             if label in white_labels:
                 points = np.array(shape["points"], dtype=np.float32)
-                x_min, y_min = points[0]
-                x_max, y_max = points[2]
+                x_min, y_min = np.min(points, axis=0)
+                x_max, y_max = np.max(points, axis=0)
                 boxes.append([x_min, y_min, x_max, y_max])
                 labels.append(1)
                 iscrowd.append(int(shape["difficult"]))
@@ -113,8 +113,8 @@ class CubDataset(Dataset):
             label = shape["label"]
             if label in white_labels:
                 points = np.array(shape["points"], dtype=np.float32)
-                x_min, y_min = points[0]
-                x_max, y_max = points[2]
+                x_min, y_min = np.min(points, axis=0)
+                x_max, y_max = np.max(points, axis=0)
                 boxes.append([x_min, y_min, x_max, y_max])
                 labels.append(1)
                 iscrowd.append(int(shape["difficult"]))

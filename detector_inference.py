@@ -12,9 +12,10 @@ def create_detector_model(num_classes, load_pretrain_weights=False):
     backbone = build_resnet50_backbone(pretrained=False)
     model = FasterRCNN(backbone=backbone, num_classes=num_classes)
     if load_pretrain_weights:
-        weight_path = "save_weights/resnet-fpn-model-3.pth"
-        weights_dict = torch.load(weight_path, map_location='cpu', weights_only=True)
-        model.load_state_dict(weights_dict, strict=False)
+        weight_path = "save_weights/resnet-fpn-model-64.pth"
+        weights_dict = torch.load(weight_path, map_location='cpu')
+        weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
+        model.load_state_dict(weights_dict)
     return model
 
 
