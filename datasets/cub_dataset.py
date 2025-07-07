@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 from datasets import transforms
 
 
-white_labels = [ "sky",  "snow",  "grass",  "tree",  "stone",  "beach",  "foreground",  "foregroung"]
+attr_labels = [ "beak",  "left eye",  "left leg",  "left wing",  "nape",  "right eye",  "right leg",  "right wing", "tail", "nostril", "foreground"]
 
 class CubDataset(Dataset):
     def __init__(self, root, transforms, is_train):
@@ -68,14 +68,13 @@ class CubDataset(Dataset):
         iscrowd = []
         for shape in json_data["shapes"]:
             label = shape["label"]
-            if label in white_labels:
-                continue
-            points = np.array(shape["points"], dtype=np.float32)
-            x_min, y_min = points[0]
-            x_max, y_max = points[2]
-            boxes.append([x_min, y_min, x_max, y_max])
-            labels.append(self.class_dict[label])
-            iscrowd.append(int(shape["difficult"]))
+            if label in attr_labels:
+                points = np.array(shape["points"], dtype=np.float32)
+                x_min, y_min = points[0]
+                x_max, y_max = points[2]
+                boxes.append([x_min, y_min, x_max, y_max])
+                labels.append(self.class_dict[label])
+                iscrowd.append(int(shape["difficult"]))
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
         class_label = torch.as_tensor(class_label, dtype=torch.int64)
@@ -112,14 +111,13 @@ class CubDataset(Dataset):
         iscrowd = []
         for shape in json_data["shapes"]:
             label = shape["label"]
-            if label in white_labels:
-                continue
-            points = np.array(shape["points"], dtype=np.float32)
-            x_min, y_min = points[0]
-            x_max, y_max = points[2]
-            boxes.append([x_min, y_min, x_max, y_max])
-            labels.append(self.class_dict[label])
-            iscrowd.append(int(shape["difficult"]))
+            if label in attr_labels:
+                points = np.array(shape["points"], dtype=np.float32)
+                x_min, y_min = points[0]
+                x_max, y_max = points[2]
+                boxes.append([x_min, y_min, x_max, y_max])
+                labels.append(self.class_dict[label])
+                iscrowd.append(int(shape["difficult"]))
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
         class_label = torch.as_tensor(class_label, dtype=torch.int64)

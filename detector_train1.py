@@ -2,7 +2,7 @@ import os
 import datetime
 import torch
 from datasets import transforms
-from datasets.cub_dataset import CubDataset
+from datasets.cub_dataset1 import CubDataset
 from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
@@ -102,6 +102,7 @@ def main(args):
     learning_rate = []
     val_map = []
 
+    best_acc = 0.
     for epoch in range(args.start_epoch, args.epochs):
         mean_loss, lr = train_one_epoch(
             model,
@@ -131,6 +132,10 @@ def main(args):
         }
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
+        val_map.append(coco_info[1])  # pascal mAP
+        if (coco_info[0] > best_acc):
+            best_acc = coco_info[0]
+            torch.save(save_files, "save_weights/resnet-fpn-model-best.pth")
         torch.save(save_files, "save_weights/resnet-fpn-model-{}.pth".format(epoch))
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
@@ -145,7 +150,7 @@ if __name__ == "__main__":
         description=__doc__)
     parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
-    parser.add_argument('--num-classes', default=11, type=int, help='num_classes')
+    parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=50, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')

@@ -12,7 +12,7 @@ def create_detector_model(num_classes, load_pretrain_weights=False):
     backbone = build_resnet50_backbone(pretrained=False)
     model = FasterRCNN(backbone=backbone, num_classes=num_classes)
     if load_pretrain_weights:
-        weight_path = "save_weights/resnet-fpn-model-64.pth"
+        weight_path = "save_weights/resnet-fpn-model-89.pth"
         weights_dict = torch.load(weight_path, map_location='cpu')
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
         model.load_state_dict(weights_dict)
@@ -20,7 +20,7 @@ def create_detector_model(num_classes, load_pretrain_weights=False):
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-model = create_detector_model(load_pretrain_weights=True, num_classes=2)
+model = create_detector_model(load_pretrain_weights=True, num_classes=12)
 model = model.to(device)
 
 
@@ -96,13 +96,13 @@ def plot_image(img, boxes, scores, labels, dataset, save_path=None):
         )
         # Add the patch to the Axes
         ax.add_patch(rect)
-        plt.text(
-            box[0], box[1],
-            s=class_labels[int(class_pred)] + " " + str(int(100 * conf)) + "%",
-            color="white",
-            verticalalignment="top",
-            bbox={"color": colors[int(class_pred)], "pad": 0},
-        )
+        # plt.text(
+        #     box[0], box[1],
+        #     s=class_labels[int(class_pred)] + " " + str(int(100 * conf)) + "%",
+        #     color="white",
+        #     verticalalignment="top",
+        #     bbox={"color": colors[int(class_pred)], "pad": 0},
+        # )
 
     # Used to save inference phase results
     if save_path is not None:
@@ -124,7 +124,7 @@ if __name__ == "__main__":
     COCO_LABELS = []
     for i, key in enumerate(json_data.keys()):
         COCO_LABELS.append(key)
-
+    COCO_LABELS.insert(0, 'background')
     img = img.cpu().permute(1, 2, 0).numpy()
     plot_image(img, boxes, scores, labels, COCO_LABELS)
 

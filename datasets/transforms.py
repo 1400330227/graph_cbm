@@ -31,6 +31,7 @@ class RandomHorizontalFlip(object):
             image = image.flip(-1)  # 水平翻转图片
             bbox = target["boxes"]
             # bbox: xmin, ymin, xmax, ymax
-            bbox[:, [0, 2]] = width - bbox[:, [2, 0]]  # 翻转对应bbox坐标信息
+            if len(bbox) > 0:
+                bbox[:, [0, 2]] = width - bbox[:, [2, 0]]  # 翻转对应bbox坐标信息
             target["boxes"] = bbox
         return image, target
