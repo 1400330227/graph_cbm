@@ -9,8 +9,6 @@ from torch.utils.data import Dataset
 from datasets import transforms
 
 
-attr_labels = [ "beak",  "left eye",  "left leg",  "left wing",  "nape",  "right eye",  "right leg",  "right wing", "tail", "nostril", "foreground"]
-
 class CubDataset(Dataset):
     def __init__(self, root, transforms, is_train):
         self.root = root
@@ -18,7 +16,7 @@ class CubDataset(Dataset):
         self.img_root = os.path.join(self.root, "images")
         self.annotations_root = os.path.join(self.root, "images.txt")
         self.train_test_split_root = os.path.join(self.root, "train_test_split.txt")
-        self.json_file = os.path.join(self.root, "cub_attibutes.json")
+        self.json_file = os.path.join(self.root, "cub_attibutes1.json")
         self.is_train = is_train
         self.train_val_data, test_data = [], []
 
@@ -68,13 +66,12 @@ class CubDataset(Dataset):
         iscrowd = []
         for shape in json_data["shapes"]:
             label = shape["label"]
-            if label in attr_labels:
-                points = np.array(shape["points"], dtype=np.float32)
-                x_min, y_min = points[0]
-                x_max, y_max = points[2]
-                boxes.append([x_min, y_min, x_max, y_max])
-                labels.append(self.class_dict[label])
-                iscrowd.append(int(shape["difficult"]))
+            points = np.array(shape["points"], dtype=np.float32)
+            x_min, y_min = points[0]
+            x_max, y_max = points[2]
+            boxes.append([x_min, y_min, x_max, y_max])
+            labels.append(self.class_dict[label])
+            iscrowd.append(int(shape["difficult"]))
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
         class_label = torch.as_tensor(class_label, dtype=torch.int64)
@@ -111,13 +108,12 @@ class CubDataset(Dataset):
         iscrowd = []
         for shape in json_data["shapes"]:
             label = shape["label"]
-            if label in attr_labels:
-                points = np.array(shape["points"], dtype=np.float32)
-                x_min, y_min = points[0]
-                x_max, y_max = points[2]
-                boxes.append([x_min, y_min, x_max, y_max])
-                labels.append(self.class_dict[label])
-                iscrowd.append(int(shape["difficult"]))
+            points = np.array(shape["points"], dtype=np.float32)
+            x_min, y_min = points[0]
+            x_max, y_max = points[2]
+            boxes.append([x_min, y_min, x_max, y_max])
+            labels.append(self.class_dict[label])
+            iscrowd.append(int(shape["difficult"]))
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
         class_label = torch.as_tensor(class_label, dtype=torch.int64)
@@ -137,7 +133,6 @@ class CubDataset(Dataset):
         return (data_height, data_width), target
 
 
-
 if __name__ == '__main__':
     data_transform = {
         "train": transforms.Compose([transforms.ToTensor(), transforms.RandomHorizontalFlip(0.5)]),
@@ -145,7 +140,8 @@ if __name__ == '__main__':
     }
     cub_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
 
-    train_data_loader = torch.utils.data.DataLoader(cub_dataset, batch_size=2, shuffle=True, collate_fn=cub_dataset.collate_fn)
+    train_data_loader = torch.utils.data.DataLoader(cub_dataset, batch_size=2, shuffle=True,
+                                                    collate_fn=cub_dataset.collate_fn)
 
     for i, (img, target) in enumerate(train_data_loader):
         print(len(img))
