@@ -5,6 +5,19 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from typing import Tuple, Type, Any, Optional
 
+from torch.nn.utils.rnn import pad_sequence
+
+
+def pad_packed_sequence(x, num_objs):
+    unpadded_tensors = [x[i, :num_objs[i], :] for i in range(len(num_objs))]
+    recovered_chunks = []
+    for i in range(x.shape[0]):  # 遍历批次中的每个样本
+        seq_len = num_objs[i]  # 获取当前样本的原始长度
+        recovered_chunks.append(x[i, :seq_len])  # 截取有效部分
+
+    # 重新拼接为原始形状
+    recovered_x = torch.cat(recovered_chunks, dim=0)
+
 
 class TransformerEncoder(nn.Module):
     def __init__(
@@ -29,11 +42,11 @@ class TransformerEncoder(nn.Module):
         self.ln = nn.LayerNorm(hidden_dim)
 
     def forward(self, x, num_objs):
-        x = torch.stack(x.split(num_objs, dim=0), dim=0)
+        x = pad_sequence(x.split(num_objs, dim=0), batch_first=True)
         for block in self.blocks:
             x = block(x)
         x = self.ln(self.mlp(x))
-        x = x.reshape(-1, x.shape[-1])
+        x = torch.concat([x[i, :num_objs[i], :] for i in range(len(num_objs))], dim=0)
         return x
 
 

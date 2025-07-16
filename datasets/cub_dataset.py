@@ -14,12 +14,15 @@ class CubDataset(Dataset):
         self.root = root
         self.transforms = transforms
         self.img_root = os.path.join(self.root, "images")
+        self.relationship_root = os.path.join(self.root, "relationships")
         self.annotations_root = os.path.join(self.root, "images.txt")
         self.train_test_split_root = os.path.join(self.root, "train_test_split.txt")
-        self.json_file = os.path.join(self.root, "cub_attibutes1.json")
+        self.json_file = os.path.join(self.root, "cub_attributes.json")
+        self.predicate_file = os.path.join(self.root, "predicate.json")
         self.is_train = is_train
         self.train_val_data, test_data = [], []
-
+        self.class_dict = {}
+        self.predicate_dict = {}
         path_to_id_map = dict()
         with open(self.annotations_root) as f:
             for line in f:
@@ -34,6 +37,9 @@ class CubDataset(Dataset):
 
         with open(self.json_file, 'r') as f:
             self.class_dict = json.load(f)
+
+        with open(self.predicate_file, 'r') as f:
+            self.predicate_dict = json.load(f)
 
         folder_list = [f for f in os.listdir(self.img_root) if isdir(join(self.img_root, f))]
         folder_list.sort()
@@ -56,11 +62,14 @@ class CubDataset(Dataset):
 
     def __getitem__(self, idx):
         img_id, img_path, class_label = self.data[idx]
+        relationship_path = os.path.join(self.relationship_root, img_path)
         img_path = os.path.join(self.img_root, img_path)
         json_path = img_path.replace(".jpg", ".json")
+        relationship_path = relationship_path.replace(".jpg", ".json")
         image = Image.open(img_path)
         with open(json_path) as f:
             json_data = json.load(f)
+
         boxes = []
         labels = []
         iscrowd = []
@@ -78,17 +87,49 @@ class CubDataset(Dataset):
         iscrowd = torch.as_tensor(iscrowd, dtype=torch.int64)
         image_id = torch.tensor([img_id])
         area = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])
+        obj_relations, obj_relation_triplets = self.get_relation_map(relationship_path, boxes, labels)
         target = {}
         target["boxes"] = boxes
         target["labels"] = labels
         target["image_id"] = image_id
         target["area"] = area
         target["iscrowd"] = iscrowd
-        target["relation"] = torch.randint(0, 51, [len(labels), len(labels)])
+        target["relation"] = obj_relations
+        # target["obj_relation_triplets"] = obj_relation_triplets
         target["class_label"] = class_label
         if self.transforms is not None:
             image, target = self.transforms(image, target)
         return image, target
+
+    def get_relation_map(self, relationship_path, obj_boxes, labels):
+        num_objs = obj_boxes.shape[0]
+        with open(relationship_path) as f:
+            try:
+                relationships_data = json.load(f)
+            except json.decoder.JSONDecodeError:
+                print(relationship_path)
+        label_to_indices = {}
+        obj_relations = torch.zeros((num_objs, num_objs), dtype=torch.int64)
+        obj_relation_triplets = []
+        for idx, label in enumerate(labels):
+            label = label.item()
+            label_to_indices.setdefault(label, []).append(idx)
+        for rel_pair in relationships_data["rel_pairs"]:
+            obj_start, rel, obj_end = rel_pair[0], rel_pair[1], rel_pair[2]
+            obj_start_label = self.class_dict.get(obj_start, -1)
+            obj_end_label = self.class_dict.get(obj_end, -1)
+            rel_label = self.predicate_dict.get(rel, 0)
+            if obj_start_label == -1 or obj_end_label == -1:
+                continue
+            obj_relation_triplets.append((obj_start_label, obj_end_label, rel_label))
+            start_indices = label_to_indices.get(obj_start_label, [])
+            end_indices = label_to_indices.get(obj_end_label, [])
+            if start_indices and end_indices:
+                rows = torch.tensor(start_indices, dtype=torch.long)
+                cols = torch.tensor(end_indices, dtype=torch.long)
+                mask = obj_relations[rows[:, None], cols[None, :]] == 0
+                obj_relations[rows[:, None], cols[None, :]] = torch.where(mask, rel_label, obj_relations[rows[:, None], cols[None, :]])
+        return obj_relations, obj_relation_triplets
 
     @staticmethod
     def collate_fn(batch):

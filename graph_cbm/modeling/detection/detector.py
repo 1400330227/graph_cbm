@@ -104,11 +104,13 @@ class FasterRCNN(GeneralizedRCNN):
         super().__init__(backbone, rpn, roi_heads, transform)
 
 
-def build_detector(backbone, num_classes, weights_path="", use_relation=False):
-    model = FasterRCNN(backbone=backbone, num_classes=91, use_relation=use_relation)
+def build_detector(backbone, num_classes, weights_path="", use_relation=False, is_train=False):
+    model = FasterRCNN(backbone=backbone, num_classes=91 if is_train else num_classes, use_relation=use_relation)
     if weights_path != "":
         weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
-        model.load_state_dict(weights_dict, strict=False)
-    in_features = model.roi_heads.box_predictor.cls_score.in_features
-    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+        weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
+        model.load_state_dict(weights_dict)
+    if is_train:
+        in_features = model.roi_heads.box_predictor.cls_score.in_features
+        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     return model

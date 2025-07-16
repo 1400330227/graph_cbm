@@ -2,6 +2,7 @@ import os
 import datetime
 import torch
 from datasets import transforms
+from datasets.cub_dataset import CubDataset
 from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
@@ -12,16 +13,12 @@ from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, Gr
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-# weights_path = "./checkpoints/fasterrcnn_resnet50_fpn.pth"
-
-
 def create_model(num_classes, relation_classes, n_tasks=200):
     backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
+    weights_path = "checkpoints/resnet-fpn-model-best.pth"
     detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
-
-    predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes, feature_extractor=detector.roi_heads.box_head)
-
+    predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
+                          feature_extractor=detector.roi_heads.box_head)
     model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, True)
     return model
 
@@ -35,10 +32,11 @@ def main(args):
                                      transforms.RandomHorizontalFlip(0.5)]),
         "val": transforms.Compose([transforms.ToTensor()])
     }
-    VOC_root = args.data_path
-    if os.path.exists(os.path.join(VOC_root, "VOCdevkit")) is False:
-        raise FileNotFoundError("VOCdevkit dose not in path:'{}'.".format(VOC_root))
-    train_dataset = VOCDataSet(VOC_root, "2012", data_transform["train"], "train.txt")
+    # VOC_root = args.data_path
+    # if os.path.exists(os.path.join(VOC_root, "VOCdevkit")) is False:
+    #     raise FileNotFoundError("VOCdevkit dose not in path:'{}'.".format(VOC_root))
+    # train_dataset = VOCDataSet(VOC_root, "2012", data_transform["train"], "train.txt")
+    train_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
     train_sampler = None
     if args.aspect_ratio_group_factor >= 0:
         train_sampler = torch.utils.data.RandomSampler(train_dataset)
@@ -64,7 +62,8 @@ def main(args):
             num_workers=nw,
             collate_fn=train_dataset.collate_fn
         )
-    val_dataset = VOCDataSet(VOC_root, "2012", data_transform["val"], "val.txt")
+    # val_dataset = VOCDataSet(VOC_root, "2012", data_transform["val"], "val.txt")
+    val_dataset = CubDataset("data/CUB_200_2011", data_transform["val"], False)
     val_data_set_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size,
@@ -144,8 +143,8 @@ if __name__ == "__main__":
         description=__doc__)
     parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
-    parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=50, type=int, help='relation_classes')
+    parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
+    parser.add_argument('--relation-classes', default=40, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')

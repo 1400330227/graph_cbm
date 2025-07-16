@@ -14,17 +14,16 @@ from torch_geometric.nn import RGCNConv
 class RGCNConvLayer(torch.nn.Module):
     def __init__(
             self,
-            num_nodes,
             num_relations,
             input_dim=1280,
             hidden_dim=512,
             out_dim=256,
             num_layers=2,
             dropout=0.5,
-            num_bases=None
+            num_bases=None,
+            pooling='mean'
     ):
         super().__init__()
-        self.embedding = torch.nn.Embedding(num_nodes, input_dim)
         self.convs = torch.nn.ModuleList()
         self.lin_obj = nn.Linear(input_dim, 512)
         self.convs.append(RGCNConv(512, hidden_dim, num_relations, num_bases))
@@ -32,15 +31,31 @@ class RGCNConvLayer(torch.nn.Module):
             self.convs.append(RGCNConv(hidden_dim, hidden_dim, num_relations, num_bases))
         self.convs.append(RGCNConv(hidden_dim, out_dim, num_relations, num_bases))
         self.dropout = dropout
+        self.pooling = pooling
 
-    def forward(self, x, edge_index, edge_type):
+    def forward(self, x, edge_index, edge_type, num_nodes):
         x = self.lin_obj(x)
         for conv in self.convs[:-1]:
             x = conv(x, edge_index, edge_type)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.convs[-1](x, edge_index, edge_type)
+        x = self.graph_pooling(x, num_nodes)
         return x
+
+    def graph_pooling(self, x, num_nodes):
+        node_splits = torch.split(x, num_nodes, dim=0)
+        pooled = []
+        for nodes in node_splits:
+            if self.pooling == 'mean':
+                pooled.append(torch.mean(nodes, dim=0))
+            elif self.pooling == 'sum':
+                pooled.append(torch.sum(nodes, dim=0))
+            elif self.pooling == 'max':
+                pooled.append(torch.max(nodes, dim=0)[0])
+            else:
+                raise ValueError(f"Unknown pooling method: {self.pooling}")
+        return torch.stack(pooled, dim=0)
 
 
 def task_loss(y_logits, y, n_tasks, task_class_weights=None):
@@ -55,19 +70,21 @@ class C2yModel(nn.Module):
         self.num_classes = num_classes
         self.relation_classes = relation_classes
         self.n_tasks = n_tasks
-        self.features = RGCNConvLayer(num_classes, relation_classes)
+        self.features = RGCNConvLayer(relation_classes)
         self.classifier = nn.Sequential(*[
             nn.Linear(256, 256),
             nn.Dropout(p=0.5),
             nn.Linear(256, n_tasks)
         ])
 
-    def forward(self, x, edge_index, edge_type, targets):
-        x = self.features(x, edge_index, edge_type)
+    def forward(self, x, edge_index, edge_type, num_nodes, targets):
+        x = self.features(x, edge_index, edge_type, num_nodes)
         y_logits = self.classifier(x)
         loss = {}
         if self.training:
-            loss = task_loss(x, targets, self.n_tasks)
+            y = torch.as_tensor([target['class_label'] for target in targets], dtype=torch.int64, device=y_logits.device)
+            loss_task = task_loss(x, y, self.n_tasks)
+            loss['loss_task'] = loss_task
         return y_logits, loss
 
 
@@ -96,7 +113,7 @@ class GraphCBM(nn.Module):
         self.num_pos_per_img = int(batch_size_per_image * positive_fraction)
         self.num_sample_per_gt_rel = num_sample_per_gt_rel
 
-        self.obj_embed = nn.Embedding(self.predictor.obj_classes, self.predictor.embedding_dim)
+        self.obj_embed = nn.Embedding(num_classes, self.predictor.embedding_dim)
 
         self.use_c2ymodel = use_c2ymodel
 
@@ -315,7 +332,7 @@ class GraphCBM(nn.Module):
         roi_features = self.box_roi_pool(features, [t["boxes"] for t in proposals], images.image_sizes)
         union_features = self.union_feature_extractor(images, features, proposals, rel_pair_idxs)
 
-        box_feature, relation_graph, predictor_losses = self.predictor(
+        box_features, relation_graphs, predictor_losses = self.predictor(
             roi_features,
             proposals,
             rel_pair_idxs,
@@ -325,14 +342,29 @@ class GraphCBM(nn.Module):
         losses = {}
         result = {}
         losses.update(predictor_losses)
-        result["relation_graph"] = relation_graph
+        result["relation_graph"] = relation_graphs
         if self.use_c2ymodel:
-            pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graph], dim=0)
-            edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graph], dim=0).permute(1, 0)
-            edge_type = torch.concat([relation["rel_labels"] for relation in relation_graph], dim=0)
+            num_nodes = [relation["pred_labels"].shape[0] for relation in relation_graphs]
+            pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graphs], dim=0)
+            features = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
+            edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graphs], dim=0).permute(1, 0)
+            edge_type = torch.concat([relation["rel_labels"] for relation in relation_graphs], dim=0)
 
-            x = torch.concat((box_feature, self.obj_embed(pred_labels.long())), dim=-1)
-            y_logits, task_loss = self.c2y_model(x, edge_index, edge_type, targets)
+            y_logits, task_loss = self.c2y_model(features, edge_index, edge_type, num_nodes, targets)
+
+            # box_features = box_features.split(num_nodes, dim=0)
+            # features = []
+            # for _, (graph, box_feature) in enumerate(zip(relation_graphs, box_features)):
+            #     pred_labels = graph["pred_labels"]
+            #     feature = torch.concat((box_feature, self.obj_embed(pred_labels.long())), dim=-1)
+            #     features.append(feature)
+            #
+            # pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graphs], dim=0)
+            # edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graphs], dim=0).permute(1, 0)
+            # edge_type = torch.concat([relation["rel_labels"] for relation in relation_graphs], dim=0)
+            #
+            # x = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
+            # y_logits, task_loss = self.c2y_model(x, edge_index, edge_type, targets, num_nodes)
             losses.update(task_loss)
             result["y_logits"] = y_logits
         if self.training:

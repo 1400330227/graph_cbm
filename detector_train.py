@@ -17,7 +17,7 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 def create_model(num_classes, relation_classes):
     backbone = build_resnet50_backbone(pretrained=False)
     weights_path = "checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
-    model = build_detector(backbone, num_classes, weights_path)
+    model = build_detector(backbone, num_classes, weights_path, is_train=True)
     return model
 
 
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda:2', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=50, type=int, help='relation_classes')
+    parser.add_argument('--relation-classes', default=40, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
