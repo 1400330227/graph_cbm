@@ -6,23 +6,25 @@ from datasets.cub_dataset import CubDataset
 from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
+from graph_cbm.modeling.graph_cbm import GraphCBM
+from graph_cbm.modeling.relation.predictor import Predictor
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-# weights_path = "./checkpoints/fasterrcnn_resnet50_fpn.pth"
-
-
-def create_model(num_classes, relation_classes):
+def create_model(num_classes, relation_classes, n_tasks=200):
     backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
-    model = build_detector(backbone, num_classes, weights_path, is_train=True)
+    weights_path = "checkpoints/resnet-fpn-model-best.pth"
+    detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
+    predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
+                          feature_extractor=detector.roi_heads.box_head)
+    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, True)
     return model
 
 
 def main(args):
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("Using {} device training.".format(device.type))
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     data_transform = {
@@ -80,13 +82,10 @@ def main(args):
         weight_decay=args.weight_decay
     )
     scaler = torch.cuda.amp.GradScaler() if args.amp else None
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer,
-        T_0=50,
-        T_mult=2,
-        eta_min=1e-6,
-        last_epoch=-1
-    )
+        step_size=3,
+        gamma=0.33)
 
     if args.resume != "":
         checkpoint = torch.load(args.resume, map_location='cpu')
@@ -102,7 +101,6 @@ def main(args):
     learning_rate = []
     val_map = []
 
-    best_acc = 0.
     for epoch in range(args.start_epoch, args.epochs):
         mean_loss, lr = train_one_epoch(
             model,
@@ -128,15 +126,10 @@ def main(args):
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
-            'epoch': epoch
-        }
+            'epoch': epoch}
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        val_map.append(coco_info[1])  # pascal mAP
-        if (coco_info[0] > best_acc):
-            best_acc = coco_info[0]
-            torch.save(save_files, "save_weights/detector/resnet-fpn-model-best.pth")
-        torch.save(save_files, "save_weights/detector/resnet-fpn-model-{}.pth".format(epoch))
+        torch.save(save_files, "save_weights/resnet-fpn-model-{}.pth".format(epoch))
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
     if len(val_map) != 0:
@@ -155,7 +148,7 @@ if __name__ == "__main__":
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
-    parser.add_argument('--epochs', default=1000, type=int, metavar='N', help='number of total epochs to run')
+    parser.add_argument('--epochs', default=2000, type=int, metavar='N', help='number of total epochs to run')
     parser.add_argument('--lr', default=0.01, type=float,
                         help='initial learning rate, 0.02 is the default value for training '
                              'on 8 gpus and 2 images_per_gpu')

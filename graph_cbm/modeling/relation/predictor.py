@@ -99,10 +99,10 @@ class Predictor(nn.Module):
             rel_labels = rel_class[sorting_idx]
 
             result.append({
-                "bbox": bbox,
+                "boxes": bbox,
                 "obj_logit": obj_logit,
-                "pred_labels": pred_labels,
-                "pred_scores": pred_scores,
+                "labels": pred_labels,
+                "scores": pred_scores,
                 "rel_pair_idx": rel_pair_idx,
                 "rel_class_prob": rel_class_prob,
                 "rel_labels": rel_labels,

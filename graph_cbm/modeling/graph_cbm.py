@@ -65,7 +65,7 @@ def task_loss(y_logits, y, n_tasks, task_class_weights=None):
 
 
 class C2yModel(nn.Module):
-    def __init__(self, num_classes, relation_classes, n_tasks):
+    def __init__(self, num_classes, relation_classes, n_tasks, embedding_dim):
         super(C2yModel, self).__init__()
         self.num_classes = num_classes
         self.relation_classes = relation_classes
@@ -77,16 +77,34 @@ class C2yModel(nn.Module):
             nn.Linear(256, n_tasks)
         ])
 
-    def forward(self, x, edge_index, edge_type, num_nodes, targets):
+        self.obj_embed = nn.Embedding(num_classes, embedding_dim)
+
+    def forward(self, box_features, relation_graphs, edge_index, edge_type, num_nodes, targets):
+        num_nodes = [relation["pred_labels"].shape[0] for relation in relation_graphs]
+        pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graphs], dim=0)
+        x = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
+        edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graphs], dim=0).permute(1, 0)
+        edge_type = torch.concat([relation["rel_labels"] for relation in relation_graphs], dim=0)
+
         x = self.features(x, edge_index, edge_type, num_nodes)
         y_logits = self.classifier(x)
+        y_logits = y_logits.split(num_nodes, dim=0)
+        result = self.post_processor(y_logits, relation_graphs)
         loss = {}
         if self.training:
             y = torch.as_tensor([target['class_label'] for target in targets], dtype=torch.int64, device=y_logits.device)
             loss_task = task_loss(x, y, self.n_tasks)
             loss['loss_task'] = loss_task
-        return y_logits, loss
+        return result, loss
 
+    def post_processor(self, y_logits, relation_graphs):
+        result = []
+        for i, (y_logit, relation_graph) in enumerate(zip(y_logits, relation_graphs)):
+            y_prob = F.softmax(y_logit, -1)
+            relation_graph["y_prob"] = y_prob
+            relation_graph["y_logit"] = y_logit
+            result.append(relation_graph)
+        return result
 
 class GraphCBM(nn.Module):
     def __init__(
@@ -131,7 +149,7 @@ class GraphCBM(nn.Module):
         ])
 
         if self.use_c2ymodel:
-            self.c2y_model = C2yModel(num_classes, relation_classes, n_tasks)
+            self.c2y_model = C2yModel(num_classes, relation_classes, n_tasks, self.predictor.embedding_dim)
 
     def motif_rel_fg_bg_sampling(self, device, tgt_rel_matrix, ious, is_match, rel_possibility):
         """
@@ -339,34 +357,13 @@ class GraphCBM(nn.Module):
             union_features,
             rel_labels
         )
+        result = relation_graphs
         losses = {}
-        result = {}
         losses.update(predictor_losses)
-        result["relation_graph"] = relation_graphs
         if self.use_c2ymodel:
-            num_nodes = [relation["pred_labels"].shape[0] for relation in relation_graphs]
-            pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graphs], dim=0)
-            features = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
-            edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graphs], dim=0).permute(1, 0)
-            edge_type = torch.concat([relation["rel_labels"] for relation in relation_graphs], dim=0)
-
-            y_logits, task_loss = self.c2y_model(features, edge_index, edge_type, num_nodes, targets)
-
-            # box_features = box_features.split(num_nodes, dim=0)
-            # features = []
-            # for _, (graph, box_feature) in enumerate(zip(relation_graphs, box_features)):
-            #     pred_labels = graph["pred_labels"]
-            #     feature = torch.concat((box_feature, self.obj_embed(pred_labels.long())), dim=-1)
-            #     features.append(feature)
-            #
-            # pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graphs], dim=0)
-            # edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graphs], dim=0).permute(1, 0)
-            # edge_type = torch.concat([relation["rel_labels"] for relation in relation_graphs], dim=0)
-            #
-            # x = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
-            # y_logits, task_loss = self.c2y_model(x, edge_index, edge_type, targets, num_nodes)
-            losses.update(task_loss)
-            result["y_logits"] = y_logits
+            cbm_logits, loss_task = self.c2y_model(box_features, relation_graphs, targets)
+            losses.update(loss_task)
+            result = cbm_logits
         if self.training:
             return losses
         return result

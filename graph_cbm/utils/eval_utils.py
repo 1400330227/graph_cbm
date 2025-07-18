@@ -7,6 +7,7 @@ import torch
 from .coco_utils import get_coco_api_from_dataset
 from .coco_eval import CocoEvaluator
 import graph_cbm.utils.distributed_utils as utils
+from .sg_eval import BasicSceneGraphEvaluator
 
 
 def train_one_epoch(model, optimizer, data_loader, device, epoch,
@@ -67,7 +68,6 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch,
 
 @torch.no_grad()
 def evaluate(model, data_loader, device):
-
     cpu_device = torch.device("cpu")
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -109,6 +109,74 @@ def evaluate(model, data_loader, device):
     coco_info = coco_evaluator.coco_eval[iou_types[0]].stats.tolist()  # numpy to list
 
     return coco_info
+
+
+@torch.no_grad()
+def sg_evaluate(model, data_loader, device, mode):
+    cpu_device = torch.device("cpu")
+    model.eval()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = "Test: "
+
+    coco = get_coco_api_from_dataset(data_loader.dataset)
+    iou_types = _get_iou_types(model)
+    coco_evaluator = CocoEvaluator(coco, iou_types)
+
+    sg_evaluator = BasicSceneGraphEvaluator.all_modes()
+
+    for image, targets in metric_logger.log_every(data_loader, 100, header):
+        image = list(img.to(device) for img in image)
+
+        # 当使用CPU时，跳过GPU相关指令
+        if device != torch.device("cpu"):
+            torch.cuda.synchronize(device)
+
+        model_time = time.time()
+        outputs = model(image)
+
+        outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
+        model_time = time.time() - model_time
+
+        res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
+        val_batch(targets, outputs, sg_evaluator[mode])
+
+        evaluator_time = time.time()
+        coco_evaluator.update(res)
+        evaluator_time = time.time() - evaluator_time
+        metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
+
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    coco_evaluator.synchronize_between_processes()
+
+    # accumulate predictions from all images
+    coco_evaluator.accumulate()
+    coco_evaluator.summarize()
+
+    coco_info = coco_evaluator.coco_eval[iou_types[0]].stats.tolist()  # numpy to list
+
+    sg_evaluator[mode].print_stats()
+
+    return coco_info
+
+def val_batch(targets, outputs, evaluator):
+    for i, (target, output) in enumerate(zip(targets, outputs)):
+        gt_entry = {
+            'gt_classes': target["labels"].detach().cpu().numpy(),
+            'gt_relations': target["relation_tuple"].detach().cpu().numpy(),
+            'gt_boxes': target["boxes"].detach().cpu().numpy(),
+        }
+        pred_entry = {
+            # about objects
+            'pred_boxes': output["boxes"].detach().cpu().numpy(),
+            'pred_classes': output["labels"].detach().cpu().numpy(),
+            'obj_scores': output["scores"].detach().cpu().numpy(),
+            # about relations
+            'pred_rel_inds': output["rel_pair_idx"].detach().cpu().numpy(),
+            'rel_scores': output["rel_class_prob"].detach().cpu().numpy()
+        }
+        evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
 
 
 def _get_iou_types(model):

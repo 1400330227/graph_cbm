@@ -8,7 +8,7 @@ from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.modeling.graph_cbm import GraphCBM
 from graph_cbm.modeling.relation.predictor import Predictor
-from graph_cbm.utils.eval_utils import train_one_epoch, evaluate
+from graph_cbm.utils.eval_utils import train_one_epoch, evaluate, sg_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
@@ -19,7 +19,7 @@ def create_model(num_classes, relation_classes, n_tasks=200):
     detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
     predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
                           feature_extractor=detector.roi_heads.box_head)
-    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, True)
+    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, False)
     return model
 
 
@@ -115,7 +115,7 @@ def main(args):
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
         lr_scheduler.step()
-        coco_info = evaluate(model, val_data_set_loader, device=device)
+        coco_info = sg_evaluate(model, val_data_set_loader, device=device, mode=args.mode)
         with open(results_file, "a") as f:
             result_info = [f"{i:.4f}" for i in coco_info + [mean_loss.item()]] + [f"{lr:.6f}"]
             txt = "epoch:{} {}".format(epoch, '  '.join(result_info))
@@ -126,10 +126,11 @@ def main(args):
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
-            'epoch': epoch}
+            'epoch': epoch
+        }
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        torch.save(save_files, "save_weights/resnet-fpn-model-{}.pth".format(epoch))
+        torch.save(save_files, "save_weights/relations/relations-model-{}.pth".format(epoch))
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
     if len(val_map) != 0:
@@ -161,6 +162,8 @@ if __name__ == "__main__":
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
+    parser.add_argument("--mode", default='sgdet',  choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
+                        help="Use torch.cuda.amp for mixed precision training")
     args = parser.parse_args()
     print(args)
     if not os.path.exists(args.output_dir):

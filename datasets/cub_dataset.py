@@ -14,7 +14,7 @@ class CubDataset(Dataset):
         self.root = root
         self.transforms = transforms
         self.img_root = os.path.join(self.root, "images")
-        self.relationship_root = os.path.join(self.root, "relationships")
+        self.relationship_root = os.path.join(self.root, "relations")
         self.annotations_root = os.path.join(self.root, "images.txt")
         self.train_test_split_root = os.path.join(self.root, "train_test_split.txt")
         self.json_file = os.path.join(self.root, "cub_attributes.json")
@@ -58,6 +58,7 @@ class CubDataset(Dataset):
                     self.data.append((img_id, img_path, i))
 
     def __len__(self):
+        # self.data = self.data[:10]
         return len(self.data)
 
     def __getitem__(self, idx):
@@ -87,49 +88,40 @@ class CubDataset(Dataset):
         iscrowd = torch.as_tensor(iscrowd, dtype=torch.int64)
         image_id = torch.tensor([img_id])
         area = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])
-        obj_relations, obj_relation_triplets = self.get_relation_map(relationship_path, boxes, labels)
+        relations, relation_tuple = self.get_relation_map(relationship_path, boxes)
         target = {}
         target["boxes"] = boxes
         target["labels"] = labels
         target["image_id"] = image_id
         target["area"] = area
         target["iscrowd"] = iscrowd
-        target["relation"] = obj_relations
-        # target["obj_relation_triplets"] = obj_relation_triplets
+        target["relation"] = relations
+        if not self.is_train:
+            target["relation_tuple"] = relation_tuple
         target["class_label"] = class_label
         if self.transforms is not None:
             image, target = self.transforms(image, target)
         return image, target
 
-    def get_relation_map(self, relationship_path, obj_boxes, labels):
+    def get_relation_map(self, relationship_path, obj_boxes):
         num_objs = obj_boxes.shape[0]
         with open(relationship_path) as f:
-            try:
-                relationships_data = json.load(f)
-            except json.decoder.JSONDecodeError:
-                print(relationship_path)
-        label_to_indices = {}
-        obj_relations = torch.zeros((num_objs, num_objs), dtype=torch.int64)
-        obj_relation_triplets = []
-        for idx, label in enumerate(labels):
-            label = label.item()
-            label_to_indices.setdefault(label, []).append(idx)
-        for rel_pair in relationships_data["rel_pairs"]:
-            obj_start, rel, obj_end = rel_pair[0], rel_pair[1], rel_pair[2]
-            obj_start_label = self.class_dict.get(obj_start, -1)
-            obj_end_label = self.class_dict.get(obj_end, -1)
-            rel_label = self.predicate_dict.get(rel, 0)
-            if obj_start_label == -1 or obj_end_label == -1:
-                continue
-            obj_relation_triplets.append((obj_start_label, obj_end_label, rel_label))
-            start_indices = label_to_indices.get(obj_start_label, [])
-            end_indices = label_to_indices.get(obj_end_label, [])
-            if start_indices and end_indices:
-                rows = torch.tensor(start_indices, dtype=torch.long)
-                cols = torch.tensor(end_indices, dtype=torch.long)
-                mask = obj_relations[rows[:, None], cols[None, :]] == 0
-                obj_relations[rows[:, None], cols[None, :]] = torch.where(mask, rel_label, obj_relations[rows[:, None], cols[None, :]])
-        return obj_relations, obj_relation_triplets
+            relationships_data = json.load(f)
+        _relations = np.array(relationships_data["relationships"])
+        _relation_predicates = np.array(relationships_data["predicates"])
+        relations = torch.zeros((num_objs, num_objs), dtype=torch.int64)
+        valid_relations = []
+        for idx in range(len(_relations)):
+            s_idx, o_idx = _relations[idx]
+            predicate = _relation_predicates[idx]
+            if s_idx < num_objs and o_idx < num_objs:
+                relations[s_idx, o_idx] = predicate
+                valid_relations.append([s_idx, o_idx, predicate])
+        if valid_relations:
+            relation_tuple = torch.tensor(valid_relations, dtype=torch.int64)
+        else:
+            relation_tuple = torch.zeros((0, 3), dtype=torch.int64)
+        return relations, relation_tuple
 
     @staticmethod
     def collate_fn(batch):
