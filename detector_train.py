@@ -16,7 +16,7 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 def create_model(num_classes, relation_classes):
     backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
+    weights_path = "save_weights/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
     model = build_detector(backbone, num_classes, weights_path, is_train=True)
     return model
 

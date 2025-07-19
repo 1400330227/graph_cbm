@@ -10,7 +10,7 @@ from graph_cbm.modeling.relation.predictor import Predictor
 
 def create_model(num_classes, relation_classes):
     backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "checkpoints/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
+    weights_path = "../save_weights/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
     detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
 
     predictor = Predictor(
@@ -35,7 +35,7 @@ def img_transform(img):
     return img
 
 
-img = cv2.imread("./graph_cbm/finetuning/2007_002293.jpg")
+img = cv2.imread("../graph_cbm/finetuning/2007_002293.jpg")
 img = img_transform(img)
 
 

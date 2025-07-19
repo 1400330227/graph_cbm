@@ -20,7 +20,7 @@ def create_detector_model(num_classes, load_pretrain_weights=False):
     backbone = build_resnet50_backbone(pretrained=False)
     model = FasterRCNN(backbone=backbone, num_classes=num_classes)
     if load_pretrain_weights:
-        weight_path = "save_weights/detector/resnet-fpn-model-best.pth"
+        weight_path = "../save_weights/detector/resnet-fpn-model-best.pth"
         weights_dict = torch.load(weight_path, map_location='cpu')
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
         model.load_state_dict(weights_dict)
@@ -214,13 +214,13 @@ def save_x_anylabeling_json(img, boxes, scores, labels, dataset, file_path):
 
 
 def show_img():
-    img = cv2.imread("./Shiny_Cowbird_0001_796860.jpg")
+    img = cv2.imread("../data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg")
     plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
     img = img_transform(img)
     boxes, scores, labels = inference(img, model)
 
-    with open("./data/CUB_200_2011/cub_attibutes1.json", "r") as f:
+    with open("../data/CUB_200_2011/cub_attributes.json", "r") as f:
         json_data = json.load(f)
     #
     COCO_LABELS = []
@@ -232,7 +232,7 @@ def show_img():
 
 
 def save_json():
-    with open("./data/CUB_200_2011/cub_attibutes1.json", "r") as f:
+    with open("../data/CUB_200_2011/cub_attributes.json", "r") as f:
         json_data = json.load(f)
     COCO_LABELS = []
     for i, key in enumerate(json_data.keys()):
@@ -243,4 +243,4 @@ def save_json():
 
 
 if __name__ == "__main__":
-    save_json()
+    show_img()

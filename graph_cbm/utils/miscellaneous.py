@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from torchvision.ops import boxes as box_ops
 
 def intersect_2d(x1, x2):
@@ -36,5 +37,6 @@ def bbox_overlaps(boxes1, boxes2):
     Return:
         iou (m, n) [np.array]
     """
-    iou = box_ops.box_iou(boxes1, boxes2).cpu().numpy()
+
+    iou = box_ops.box_iou(torch.as_tensor(boxes1), torch.as_tensor(boxes2)).cpu().numpy()
     return iou

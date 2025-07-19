@@ -58,7 +58,7 @@ class CubDataset(Dataset):
                     self.data.append((img_id, img_path, i))
 
     def __len__(self):
-        # self.data = self.data[:10]
+        self.data = self.data[:100]
         return len(self.data)
 
     def __getitem__(self, idx):
