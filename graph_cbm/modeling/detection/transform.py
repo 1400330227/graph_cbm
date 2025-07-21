@@ -273,6 +273,12 @@ class GeneralizedRCNNTransform(nn.Module):
                 keypoints = pred["keypoints"]
                 keypoints = resize_keypoints(keypoints, im_s, o_im_s)
                 result[i]["keypoints"] = keypoints
+            if "logits_boxes" in pred:
+                logits_boxes = pred["logits_boxes"]
+                batch, num_boxs, box = logits_boxes.shape
+                logits_boxes = resize_boxes(logits_boxes.reshape(-1, box), im_s, o_im_s)
+                logits_boxes = logits_boxes.reshape(batch, num_boxs, box)
+                result[i]["logits_boxes"] = logits_boxes
         return result
 
     def __repr__(self) -> str:

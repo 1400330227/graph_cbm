@@ -61,11 +61,11 @@ class Predictor(nn.Module):
         self.post_cat = nn.Linear(hidden_dim * 2, representation_dim)
         self.ctx_linear = nn.Linear(self.representation_dim, relation_classes)
 
-    def post_processor(self, obj_logits, rel_logits, rel_pair_idxs, proposals):
+    def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals):
         device = obj_logits[0].device
         result = []
         for i, (rel_logit, obj_logit, rel_pair_idx, box) in enumerate(
-                zip(rel_logits, obj_logits, rel_pair_idxs, proposals)):
+                zip(relation_logits, obj_logits, rel_pair_idxs, proposals)):
             obj_class_prob = F.softmax(obj_logit, -1)
             obj_class_prob[:, 0] = 0
             num_obj_bbox = obj_class_prob.shape[0]
@@ -82,8 +82,6 @@ class Predictor(nn.Module):
             regressed_box_idxs = obj_class
 
             bbox = box["logits_boxes"][torch.arange(batch_size, device=device), regressed_box_idxs]
-            pred_labels = obj_class
-            pred_scores = obj_scores
 
             obj_scores0 = obj_scores[rel_pair_idx[:, 0]]
             obj_scores1 = obj_scores[rel_pair_idx[:, 1]]
@@ -101,8 +99,8 @@ class Predictor(nn.Module):
             result.append({
                 "boxes": bbox,
                 "obj_logit": obj_logit,
-                "labels": pred_labels,
-                "scores": pred_scores,
+                "labels": obj_class,
+                "scores": obj_scores,
                 "rel_pair_idx": rel_pair_idx,
                 "rel_class_prob": rel_class_prob,
                 "rel_labels": rel_labels,
