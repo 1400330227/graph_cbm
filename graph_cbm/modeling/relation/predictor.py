@@ -17,7 +17,6 @@ def relation_loss(proposals, rel_labels, relation_logits, refine_obj_logits):
     fg_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
     rel_labels = torch.concat(rel_labels, dim=0)
 
-    print(rel_labels.long().unique())
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
     loss_refine_obj = criterion_loss(refine_obj_logits, fg_labels.long())
     return loss_relation, loss_refine_obj
