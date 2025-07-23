@@ -82,10 +82,13 @@ def main(args):
         weight_decay=args.weight_decay
     )
     scaler = torch.cuda.amp.GradScaler() if args.amp else None
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
-        step_size=3,
-        gamma=0.33)
+        T_0=50,
+        T_mult=2,
+        eta_min=1e-6,
+        last_epoch=-1
+    )
 
     if args.resume != "":
         checkpoint = torch.load(args.resume, map_location='cpu')
@@ -149,7 +152,7 @@ if __name__ == "__main__":
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
-    parser.add_argument('--epochs', default=2000, type=int, metavar='N', help='number of total epochs to run')
+    parser.add_argument('--epochs', default=1000, type=int, metavar='N', help='number of total epochs to run')
     parser.add_argument('--lr', default=0.01, type=float,
                         help='initial learning rate, 0.02 is the default value for training '
                              'on 8 gpus and 2 images_per_gpu')
@@ -158,7 +161,7 @@ if __name__ == "__main__":
     parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)',
                         dest='weight_decay')
-    parser.add_argument('--batch_size', default=4, type=int, metavar='N',
+    parser.add_argument('--batch_size', default=5, type=int, metavar='N',
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
