@@ -25,8 +25,8 @@ class BasicSceneGraphEvaluator:
         return evaluators
 
     def evaluate_scene_graph_entry(self, gt_entry, pred_scores, viz_dict=None, iou_thresh=0.5):
-        res = evaluate_from_dict(gt_entry, pred_scores, self.mode, self.result_dict,
-                                 viz_dict=viz_dict, iou_thresh=iou_thresh, multiple_preds=self.multiple_preds)
+        res = evaluate_from_dict(gt_entry, pred_scores, self.mode, self.result_dict, viz_dict=viz_dict,
+                                 iou_thresh=iou_thresh, multiple_preds=self.multiple_preds)
         # self.print_stats()
         return res
 
@@ -34,9 +34,9 @@ class BasicSceneGraphEvaluator:
         np.save(fn, self.result_dict)
 
     def print_stats(self):
-        print('======================' + self.mode + '============================')
+        print('Predicate mode: ' + self.mode)
         for k, v in self.result_dict[self.mode + '_recall'].items():
-            print('R@%i: %f' % (k, np.mean(v)))
+            print(' Average Recall     (AR) @%i: %f' % (k, np.mean(v)))
 
 
 def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=False, viz_dict=None, **kwargs):
@@ -53,6 +53,7 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
     gt_rels = gt_entry['gt_relations']
     gt_boxes = gt_entry['gt_boxes'].astype(float)
     gt_classes = gt_entry['gt_classes']
+    gt_images = gt_entry['gt_images']
 
     pred_rel_inds = pred_entry['pred_rel_inds']
     rel_scores = pred_entry['rel_scores']
@@ -103,11 +104,9 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
         pred_rels = np.column_stack((pred_rel_inds, 1 + rel_scores[:, 1:].argmax(1)))
         predicate_scores = rel_scores[:, 1:].max(1)
 
-    pred_to_gt, pred_5ples, rel_scores = evaluate_recall(
-        gt_rels, gt_boxes, gt_classes,
-        pred_rels, pred_boxes, pred_classes,
-        predicate_scores, obj_scores, phrdet=mode == 'phrdet',
-        **kwargs)
+    pred_to_gt, pred_5ples, rel_scores = evaluate_recall(gt_rels, gt_boxes, gt_classes, pred_rels, pred_boxes,
+                                                         pred_classes, predicate_scores, obj_scores,
+                                                         phrdet=mode == 'phrdet', gt_images=gt_images)
 
     for k in result_dict[mode + '_recall']:
         match = reduce(np.union1d, pred_to_gt[:k])
@@ -116,48 +115,9 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, multiple_preds=F
         result_dict[mode + '_recall'][k].append(rec_i)
     return pred_to_gt, pred_5ples, rel_scores
 
-    # print(" ".join(["R@{:2d}: {:.3f}".format(k, v[-1]) for k, v in result_dict[mode + '_recall'].items()]))
-    # Deal with visualization later
-    # # Optionally, log things to a separate dictionary
-    # if viz_dict is not None:
-    #     # Caution: pred scores has changed (we took off the 0 class)
-    #     gt_rels_scores = pred_scores[
-    #         gt_rels[:, 0],
-    #         gt_rels[:, 1],
-    #         gt_rels[:, 2] - 1,
-    #     ]
-    #     # gt_rels_scores_cls = gt_rels_scores * pred_class_scores[
-    #     #         gt_rels[:, 0]] * pred_class_scores[gt_rels[:, 1]]
-    #
-    #     viz_dict[mode + '_pred_rels'] = pred_5ples.tolist()
-    #     viz_dict[mode + '_pred_rels_scores'] = max_pred_scores.tolist()
-    #     viz_dict[mode + '_pred_rels_scores_cls'] = max_rel_scores.tolist()
-    #     viz_dict[mode + '_gt_rels_scores'] = gt_rels_scores.tolist()
-    #     viz_dict[mode + '_gt_rels_scores_cls'] = gt_rels_scores_cls.tolist()
-    #
-    #     # Serialize pred2gt matching as a list of lists, where each sublist is of the form
-    #     # pred_ind, gt_ind1, gt_ind2, ....
-    #     viz_dict[mode + '_pred2gt_rel'] = pred_to_gt
 
-
-###########################
-def evaluate_recall(gt_rels, gt_boxes, gt_classes,
-                    pred_rels, pred_boxes, pred_classes, rel_scores=None, cls_scores=None,
-                    iou_thresh=0.5, phrdet=False):
-    """
-    Evaluates the recall
-    :param gt_rels: [#gt_rel, 3] array of GT relations
-    :param gt_boxes: [#gt_box, 4] array of GT boxes
-    :param gt_classes: [#gt_box] array of GT classes
-    :param pred_rels: [#pred_rel, 3] array of pred rels. Assumed these are in sorted order
-                      and refer to IDs in pred classes / pred boxes
-                      (id0, id1, rel)
-    :param pred_boxes:  [#pred_box, 4] array of pred boxes
-    :param pred_classes: [#pred_box] array of predicted classes for these boxes
-    :return: pred_to_gt: Matching from predicate to GT
-             pred_5ples: the predicted (id0, id1, cls0, cls1, rel)
-             rel_scores: [cls_0score, cls1_score, relscore]
-                   """
+def evaluate_recall(gt_rels, gt_boxes, gt_classes, pred_rels, pred_boxes, pred_classes, rel_scores=None,
+                    cls_scores=None, iou_thresh=0.5, phrdet=False, **kwargs):
     if pred_rels.size == 0:
         return [[]], np.zeros((0, 5)), np.zeros(0)
 
@@ -174,8 +134,7 @@ def evaluate_recall(gt_rels, gt_boxes, gt_classes,
     assert np.all(pred_rels[:, 2] > 0)
 
     pred_triplets, pred_triplet_boxes, relation_scores = _triplet(pred_rels[:, 2], pred_rels[:, :2], pred_classes,
-                                                                  pred_boxes,
-                                                                  rel_scores, cls_scores)
+                                                                  pred_boxes, rel_scores, cls_scores)
 
     scores_overall = relation_scores.prod(1)
     if not np.all(scores_overall[1:] <= scores_overall[:-1] + 1e-5):
@@ -221,13 +180,13 @@ def _triplet(predicates, relations, classes, boxes, predicate_scores=None, class
     # sub_ob_classes = classes[relations[:, :2]]
     sub_id, ob_id = relations[:, 0], relations[:, 1]
     triplets = np.column_stack((classes[sub_id], predicates, classes[ob_id]))
-    triplet_boxes = np.column_stack((boxes[relations[:, 0]], boxes[relations[:, 1]]))
+    triplet_boxes = np.column_stack((boxes[sub_id], boxes[ob_id]))
 
     triplet_scores = None
     if predicate_scores is not None and class_scores is not None:
         triplet_scores = np.column_stack((
-            class_scores[relations[:, 0]],
-            class_scores[relations[:, 1]],
+            class_scores[sub_id],
+            class_scores[ob_id],
             predicate_scores,
         ))
 

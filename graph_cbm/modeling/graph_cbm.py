@@ -92,7 +92,8 @@ class C2yModel(nn.Module):
         result = self.post_processor(y_logits, relation_graphs)
         loss = {}
         if self.training:
-            y = torch.as_tensor([target['class_label'] for target in targets], dtype=torch.int64, device=y_logits.device)
+            y = torch.as_tensor([target['class_label'] for target in targets], dtype=torch.int64,
+                                device=y_logits.device)
             loss_task = task_loss(x, y, self.n_tasks)
             loss['loss_task'] = loss_task
         return result, loss
@@ -105,6 +106,7 @@ class C2yModel(nn.Module):
             relation_graph["y_logit"] = y_logit
             result.append(relation_graph)
         return result
+
 
 class GraphCBM(nn.Module):
     def __init__(
@@ -209,10 +211,8 @@ class GraphCBM(nn.Module):
             prp_tail_idxs = prp_tail_idxs[valid_pair]
             rel_possibility[prp_head_idxs, prp_tail_idxs] = 0
             # construct corresponding proposal triplets corresponding to i_th gt relation
-            fg_labels = torch.tensor([tgt_rel_lab] * prp_tail_idxs.shape[0], dtype=torch.int64, device=device).view(-1,
-                                                                                                                    1)
-            fg_rel_i = torch.concat((prp_head_idxs.view(-1, 1), prp_tail_idxs.view(-1, 1), fg_labels), dim=-1).to(
-                torch.int64)
+            fg_labels = torch.tensor([tgt_rel_lab]*prp_tail_idxs.shape[0], dtype=torch.int64, device=device).view(-1,1)
+            fg_rel_i = torch.concat((prp_head_idxs.view(-1,1), prp_tail_idxs.view(-1,1), fg_labels), dim=-1).to(torch.int64)
             # select if too many corresponding proposal pairs to one pair of gt relationship triplet
             # NOTE that in original motif, the selection is based on a ious_score score
             if fg_rel_i.shape[0] > self.num_sample_per_gt_rel:
@@ -340,9 +340,10 @@ class GraphCBM(nn.Module):
         return union_features
 
     def forward(self, images, targets=None):
-        proposals, features, images = self.detector(images, targets)
+        proposals, features, images, targets = self.detector(images, targets)
         if self.training:
-            proposals, rel_labels, rel_pair_idxs, rel_binarys = self.select_training_samples(proposals, targets)
+            with torch.no_grad():
+                proposals, rel_labels, rel_pair_idxs, rel_binarys = self.select_training_samples(proposals, targets)
         else:
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.select_test_pairs(proposals)

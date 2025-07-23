@@ -15,8 +15,8 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 def create_model(num_classes, relation_classes, n_tasks=200):
     backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "checkpoints/resnet-fpn-model-best.pth"
-    detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
+    weights_path = "save_weights/detector/resnet-fpn-model-best.pth"
+    detector = build_detector(backbone, num_classes, weights_path, use_relation=True, is_train=False)
     predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
                           feature_extractor=detector.roi_heads.box_head)
     model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, False)
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda:1', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=40, type=int, help='relation_classes')
+    parser.add_argument('--relation-classes', default=41, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')

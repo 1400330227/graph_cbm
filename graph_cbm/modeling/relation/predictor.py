@@ -17,6 +17,7 @@ def relation_loss(proposals, rel_labels, relation_logits, refine_obj_logits):
     fg_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
     rel_labels = torch.concat(rel_labels, dim=0)
 
+    print(rel_labels.long().unique())
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
     loss_refine_obj = criterion_loss(refine_obj_logits, fg_labels.long())
     return loss_relation, loss_refine_obj
@@ -101,9 +102,9 @@ class Predictor(nn.Module):
                 "obj_logit": obj_logit,
                 "labels": obj_class,
                 "scores": obj_scores,
-                "rel_pair_idx": rel_pair_idx,
-                "rel_class_prob": rel_class_prob,
-                "rel_labels": rel_labels,
+                "rel_pair_idxs": rel_pair_idx,
+                "pred_rel_scores": rel_class_prob,
+                "pred_rel_labels": rel_labels,
             })
         return result
 
