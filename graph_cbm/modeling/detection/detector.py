@@ -36,10 +36,10 @@ class FasterRCNN(GeneralizedRCNN):
             box_roi_pool=None,
             box_head=None,
             box_predictor=None,
-            # box_score_thresh=0.05,
-            box_score_thresh=0.01,
-            # box_nms_thresh=0.5,
-            box_nms_thresh=0.3,
+            box_score_thresh=0.05,
+            # box_score_thresh=0.01,
+            box_nms_thresh=0.5,
+            # box_nms_thresh=0.3,
             box_detections_per_img=100,
             box_fg_iou_thresh=0.5,
             box_bg_iou_thresh=0.5,
@@ -115,4 +115,7 @@ def build_detector(backbone, num_classes, weights_path="", use_relation=False, i
     if is_train:
         in_features = model.roi_heads.box_predictor.cls_score.in_features
         model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+    if use_relation:
+        for param in model.parameters():
+            param.requires_grad = False
     return model

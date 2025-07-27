@@ -14,7 +14,7 @@ def relation_loss(proposals, rel_labels, relation_logits, refine_obj_logits):
     relation_logits = torch.concat(relation_logits, dim=0)
     refine_obj_logits = torch.concat(refine_obj_logits, dim=0)
 
-    fg_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
+    fg_labels = torch.concat([proposal["gt_labels"] for proposal in proposals], dim=0)
     rel_labels = torch.concat(rel_labels, dim=0)
 
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
@@ -116,15 +116,16 @@ class Predictor(nn.Module):
         box_feature = self.feature_extractor(box_feature)
 
         proposal_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
+        proposal_embedding = self.obj_embed1(proposal_labels)
         proposal_logits = torch.concat([proposal["logits"] for proposal in proposals], dim=0)
-        proposal_embedding = F.softmax(proposal_logits, dim=1) @ self.obj_embed1.weight
+        # proposal_embedding = F.softmax(proposal_logits, dim=1) @ self.obj_embed1.weight
 
         num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
         obj_representation = torch.concat((box_feature, proposal_embedding), -1)
 
         obj_embedding = self.obj_encoder(obj_representation, num_objs)
-        obj_logits = self.obj_classifier(obj_embedding)
-        obj_preds = obj_logits[:, 1:].max(1)[1] + 1
+        obj_preds = proposal_labels
+        obj_logits = proposal_logits
 
         obj_embed2 = self.obj_embed2(obj_preds.long())
         obj_features = torch.concat((box_feature, obj_embedding, obj_embed2), dim=-1)
@@ -165,3 +166,63 @@ class Predictor(nn.Module):
             loss_relation, loss_refine = relation_loss(proposals, rel_labels, rel_logits, obj_logits)
             losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine)
         return box_feature, result, losses
+
+
+    # def forward(self, feature, proposals, rel_pair_idxs, union_features, rel_labels):
+    #     _, _, h, w = feature.shape
+    #     pos_embed = self.position_encoder((h, w)).unsqueeze(0)
+    #     pos_embed = torch.repeat_interleave(pos_embed, feature.shape[0], dim=0)
+    #     box_feature = feature + pos_embed
+    #     box_feature = self.feature_extractor(box_feature)
+    #
+    #     proposal_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
+    #     proposal_logits = torch.concat([proposal["logits"] for proposal in proposals], dim=0)
+    #     proposal_embedding = F.softmax(proposal_logits, dim=1) @ self.obj_embed1.weight
+    #
+    #     num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
+    #     obj_representation = torch.concat((box_feature, proposal_embedding), -1)
+    #
+    #     obj_embedding = self.obj_encoder(obj_representation, num_objs)
+    #     obj_logits = self.obj_classifier(obj_embedding)
+    #     obj_preds = obj_logits[:, 1:].max(1)[1] + 1
+    #
+    #     obj_embed2 = self.obj_embed2(obj_preds.long())
+    #     obj_features = torch.concat((box_feature, obj_embedding, obj_embed2), dim=-1)
+    #
+    #     edge_ctx = self.edge_encoder(obj_features, num_objs)
+    #     edge_representation = self.postprocessor_embedding(edge_ctx)
+    #
+    #     edge_representation = edge_representation.view(edge_representation.size(0), 2, self.hidden_dim)
+    #     head_representation = edge_representation[:, 0].contiguous().view(-1, self.hidden_dim)
+    #     tail_representation = edge_representation[:, 1].contiguous().view(-1, self.hidden_dim)
+    #
+    #     num_rels = [r.shape[0] for r in rel_pair_idxs]
+    #     num_objs = [b["boxes"].shape[0] for b in proposals]
+    #
+    #     head_reps = head_representation.split(num_objs, dim=0)
+    #     tail_reps = tail_representation.split(num_objs, dim=0)
+    #     obj_preds = obj_preds.split(num_objs, dim=0)
+    #
+    #     prod_reps = []
+    #     pair_preds = []
+    #     for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
+    #         prod_reps.append(torch.cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+    #         pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+    #     prod_rep = torch.cat(prod_reps, dim=0)
+    #     pair_pred = torch.cat(pair_preds, dim=0)
+    #
+    #     ctx_gate = self.post_cat(prod_rep)
+    #     ctx_gate = ctx_gate * self.feature_extractor(union_features)
+    #     rel_logits = self.edge_classifier(ctx_gate) + self.ctx_linear(prod_rep)
+    #
+    #     obj_logits = obj_logits.split(num_objs, dim=0)
+    #     rel_logits = rel_logits.split(num_rels, dim=0)
+    #
+    #     result = self.post_processor(obj_logits, rel_logits, rel_pair_idxs, proposals)
+    #
+    #     losses = {}
+    #     if self.training:
+    #         loss_relation, loss_refine = relation_loss(proposals, rel_labels, rel_logits, obj_logits)
+    #         losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine)
+    #     return box_feature, result, losses
+

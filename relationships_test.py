@@ -63,7 +63,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda:1', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=41, type=int, help='relation_classes')
+    parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')

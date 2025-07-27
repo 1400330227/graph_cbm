@@ -268,6 +268,20 @@ class RoIHeads(nn.Module):
 
         return all_boxes, all_scores, all_labels, all_logits, all_logits_boxes
 
+    def assign_label_to_proposals(self, targets, proposals):
+        gt_boxes = [t["boxes"] for t in targets]
+        gt_labels = [t["labels"] for t in targets]
+        prp_boxes = [t["boxes"] for t in proposals]
+        for img_idx, (prp_boxe, gt_boxe, gt_label) in enumerate(zip(prp_boxes, gt_boxes, gt_labels)):
+            match_quality_matrix = box_ops.box_iou(gt_boxe, prp_boxe)
+            matched_idxs = self.proposal_matcher(match_quality_matrix)
+            clamped_matched_idxs = matched_idxs.clamp(min=0)
+            labels_in_image = gt_label[clamped_matched_idxs]
+            labels_in_image = labels_in_image.to(dtype=torch.int64)
+            labels_in_image[matched_idxs < 0] = 0
+            proposals[img_idx]['gt_labels'] = labels_in_image
+        return proposals
+
     def forward(
             self,
             features: dict[str, torch.Tensor],
@@ -298,6 +312,8 @@ class RoIHeads(nn.Module):
                                                                                       proposals, image_shapes)
             result = [{"boxes": b, "labels": l, "scores": s, "logits": i, "logits_boxes": j}
                       for b, l, s, i, j in zip(boxes, labels, scores, logits, logits_boxes)]
+            if self.training:
+                result = self.assign_label_to_proposals(targets, result)
             return result, {}
 
         if self.training:

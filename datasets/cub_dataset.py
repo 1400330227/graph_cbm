@@ -80,7 +80,6 @@ class CubDataset(Dataset):
         image = Image.open(img_path)
         with open(json_path) as f:
             json_data = json.load(f)
-
         boxes = []
         labels = []
         iscrowd = []
@@ -107,8 +106,7 @@ class CubDataset(Dataset):
         target["iscrowd"] = iscrowd
         target["relation"] = relations
         # if relationship_path == 'data/CUB_200_2011/relations/011.Rusty_Blackbird/Rusty_Blackbird_0032_6611.json':
-        #     self.set_relation_map(relationship_path, boxes, labels)
-        # if not self.is_train:
+        # self.set_relation_map(relationship_path, boxes, labels)
         target["relation_tuple"] = relation_tuple
         target["class_label"] = class_label
         if self.transforms is not None:
