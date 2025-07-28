@@ -71,9 +71,12 @@ class Predictor(nn.Module):
             num_obj_bbox = obj_class_prob.shape[0]
             num_obj_class = obj_class_prob.shape[1]
 
-            obj_pred = obj_prediction_nms(box["logits_boxes"], obj_logit, self.later_nms_pred_thres)
-            obj_score_ind = torch.arange(num_obj_bbox, device=obj_logit.device) * num_obj_class + obj_pred
-            obj_scores = obj_class_prob.view(-1)[obj_score_ind]
+            obj_scores, obj_pred = obj_class_prob[:, 1:].max(dim=1)
+            obj_pred = obj_pred + 1
+
+            # obj_pred = obj_prediction_nms(box["logits_boxes"], obj_logit, self.later_nms_pred_thres)
+            # obj_score_ind = torch.arange(num_obj_bbox, device=obj_logit.device) * num_obj_class + obj_pred
+            # obj_scores = obj_class_prob.view(-1)[obj_score_ind]
 
             assert obj_scores.shape[0] == num_obj_bbox
             obj_class = obj_pred

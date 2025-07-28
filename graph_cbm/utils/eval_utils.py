@@ -164,7 +164,7 @@ def val_batch(targets, outputs, evaluator):
             'gt_classes': target["labels"].detach().cpu().numpy(),
             'gt_relations': target["relation_tuple"].detach().cpu().numpy(),
             'gt_boxes': target["boxes"].detach().cpu().numpy(),
-            'gt_images': target["image_id"].detach().cpu().numpy(),
+            'gt_image_id': target["image_id"].detach().cpu().numpy(),
         }
         pred_entry = {
             # about objects
