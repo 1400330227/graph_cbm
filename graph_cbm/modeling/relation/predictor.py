@@ -12,14 +12,14 @@ from graph_cbm.utils.boxes import obj_prediction_nms
 def relation_loss(proposals, rel_labels, relation_logits, refine_obj_logits):
     criterion_loss = nn.CrossEntropyLoss()
     relation_logits = torch.concat(relation_logits, dim=0)
-    refine_obj_logits = torch.concat(refine_obj_logits, dim=0)
+    # refine_obj_logits = torch.concat(refine_obj_logits, dim=0)
 
-    fg_labels = torch.concat([proposal["gt_labels"] for proposal in proposals], dim=0)
+    # fg_labels = torch.concat([proposal["gt_labels"] for proposal in proposals], dim=0)
     rel_labels = torch.concat(rel_labels, dim=0)
 
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
-    loss_refine_obj = criterion_loss(refine_obj_logits, fg_labels.long())
-    return loss_relation, loss_refine_obj
+    # loss_refine_obj = criterion_loss(refine_obj_logits, fg_labels.long())
+    return loss_relation, 0
 
 
 class Predictor(nn.Module):

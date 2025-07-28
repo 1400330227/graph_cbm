@@ -136,7 +136,7 @@ def main(args):
         if (coco_info[0] > best_acc):
             best_acc = coco_info[0]
             torch.save(save_files, "save_weights/detector/resnet-fpn-model-best.pth")
-        torch.save(save_files, "save_weights/detector/resnet-fpn-model-{}.pth".format(epoch))
+        # torch.save(save_files, "save_weights/detector/resnet-fpn-model-{}.pth".format(epoch))
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
     if len(val_map) != 0:

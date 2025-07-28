@@ -13,6 +13,7 @@ class BasicSceneGraphEvaluator:
         self.mode = mode
         self.result_dict[self.mode + '_recall'] = {20: [], 50: [], 100: []}
         self.multiple_preds = multiple_preds
+        self.recall_means = {}
 
     @classmethod
     def all_modes(cls, **kwargs):
@@ -35,7 +36,9 @@ class BasicSceneGraphEvaluator:
     def print_stats(self):
         print('Predicate mode: ' + self.mode)
         for k, v in self.result_dict[self.mode + '_recall'].items():
-            print(' Average Recall     (AR) @%i: %f' % (k, np.mean(v)))
+            mean = np.mean(v)
+            self.recall_means[k] = mean
+            print(' Average Recall     (AR) @%i: %f' % (k, mean))
 
 
 def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, **kwargs):

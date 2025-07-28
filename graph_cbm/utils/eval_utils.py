@@ -125,7 +125,6 @@ def sg_evaluate(model, data_loader, device, mode):
     for image, targets in metric_logger.log_every(data_loader, 100, header):
         image = list(img.to(device) for img in image)
 
-        # 当使用CPU时，跳过GPU相关指令
         if device != torch.device("cpu"):
             torch.cuda.synchronize(device)
 
@@ -155,8 +154,9 @@ def sg_evaluate(model, data_loader, device, mode):
     coco_info = coco_evaluator.coco_eval[iou_types[0]].stats.tolist()  # numpy to list
 
     sg_evaluator[mode].print_stats()
+    sgg_info = sg_evaluator[mode].recall_means
 
-    return coco_info
+    return coco_info, sgg_info
 
 def val_batch(targets, outputs, evaluator):
     for i, (target, output) in enumerate(zip(targets, outputs)):
@@ -173,7 +173,8 @@ def val_batch(targets, outputs, evaluator):
             'obj_scores': output["scores"].detach().cpu().numpy(),
             # about relations
             'pred_rel_inds': output["rel_pair_idxs"].detach().cpu().numpy(),
-            'rel_scores': output["pred_rel_scores"].detach().cpu().numpy()
+            'rel_scores': output["pred_rel_scores"].detach().cpu().numpy(),
+            'pred_rel_labels': output["pred_rel_labels"].detach().cpu().numpy(),
         }
         evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
 

@@ -1,5 +1,7 @@
 import os
 import datetime
+
+import numpy as np
 import torch
 from datasets import transforms
 from datasets.cub_dataset import CubDataset
@@ -104,6 +106,7 @@ def main(args):
     learning_rate = []
     val_map = []
 
+    best_acc = 0.
     for epoch in range(args.start_epoch, args.epochs):
         mean_loss, lr = train_one_epoch(
             model,
@@ -118,7 +121,7 @@ def main(args):
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
         lr_scheduler.step()
-        coco_info = sg_evaluate(model, val_data_set_loader, device=device, mode=args.mode)
+        coco_info, sgg_info = sg_evaluate(model, val_data_set_loader, device=device, mode=args.mode)
         with open(results_file, "a") as f:
             result_info = [f"{i:.4f}" for i in coco_info + [mean_loss.item()]] + [f"{lr:.6f}"]
             txt = "epoch:{} {}".format(epoch, '  '.join(result_info))
@@ -133,7 +136,10 @@ def main(args):
         }
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        torch.save(save_files, "save_weights/relations/relations-model-{}.pth".format(epoch))
+        test_acc = sum(sgg_info.values()) / len(sgg_info)
+        if test_acc > best_acc:
+            best_acc = test_acc
+            torch.save(save_files, "save_weights/relations/relations-model-best.pth")
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
     if len(val_map) != 0:
