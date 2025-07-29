@@ -5,7 +5,7 @@ from datasets import transforms
 from datasets.cub_dataset import CubDataset
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph_cbm import GraphCBM
+from graph_cbm.modeling.graph_cbm import GraphCBM, build_Graph_CBM
 from graph_cbm.modeling.relation.predictor import Predictor
 from graph_cbm.utils.eval_utils import sg_evaluate
 from graph_cbm.utils.plot_curve import plot_map
@@ -13,11 +13,11 @@ from graph_cbm.utils.plot_curve import plot_map
 
 def create_model(num_classes, relation_classes, n_tasks=200):
     backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "save_weights/detector/resnet-fpn-model-best.pth"
-    detector = build_detector(backbone, num_classes, weights_path, use_relation=True, is_train=False)
+    detector = build_detector(backbone, num_classes, use_relation=True, is_train=False)
     predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
                           feature_extractor=detector.roi_heads.box_head)
-    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, False)
+    weights_path = "save_weights/relations/relations-model-best.pth"
+    model = build_Graph_CBM(detector, predictor, num_classes, relation_classes, n_tasks, weights_path)
     return model
 
 
@@ -45,7 +45,7 @@ def main(args):
 
     val_map = []
     for epoch in range(args.start_epoch, args.epochs):
-        coco_info = sg_evaluate(model, val_data_set_loader, device=device, mode=args.mode)
+        coco_info, sgg_info = sg_evaluate(model, val_data_set_loader, device=device, mode=args.mode)
         with open(results_file, "a") as f:
             result_info = [f"{i:.4f}" for i in coco_info]
             txt = "epoch:{} {}".format(epoch, '  '.join(result_info))

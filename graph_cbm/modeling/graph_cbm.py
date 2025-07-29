@@ -500,3 +500,20 @@ class GraphCBM(nn.Module):
         if self.training:
             return losses
         return result
+
+
+def build_Graph_CBM(
+        detector,
+        predictor,
+        num_classes,
+        relation_classes,
+        n_tasks,
+        weights_path="",
+        use_c2ymodel=False
+):
+    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, use_c2ymodel)
+    if weights_path != "":
+        weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
+        weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
+        model.load_state_dict(weights_dict)
+    return model

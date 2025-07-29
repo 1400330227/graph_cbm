@@ -4,7 +4,7 @@ from torchvision.ops.feature_pyramid_network import LastLevelMaxPool
 from graph_cbm.modeling.detection.fpn import LastLevelMaxPool, BackboneWithFPN
 
 
-def build_resnet50_backbone(pretrained):
+def build_resnet50_backbone(pretrained=False):
     models = torchvision.models.resnet50(pretrained=pretrained)
     return_nodes = {'layer1': '0', 'layer2': '1', 'layer3': '2', 'layer4': '3'}
     in_channels_list = [256, 512, 1024, 2048]
@@ -20,7 +20,7 @@ def build_resnet50_backbone(pretrained):
     return backbone
 
 
-def build_mobilenet_backbone(pretrained):
+def build_mobilenet_backbone(pretrained=False):
     models = torchvision.models.mobilenet_v3_large(pretrained=pretrained)
     return_nodes = {
         "features.6": "0",
@@ -40,7 +40,7 @@ def build_mobilenet_backbone(pretrained):
     return backbone
 
 
-def build_efficientnet_backbone(pretrained):
+def build_efficientnet_backbone(pretrained=False):
     models = torchvision.models.efficientnet_b0(pretrained=pretrained)
     return_nodes = {
         "features.3": "0",
@@ -60,7 +60,7 @@ def build_efficientnet_backbone(pretrained):
     return backbone
 
 
-def build_vgg_backbone(pretrained):
+def build_vgg_backbone(pretrained=False):
     models = torchvision.models.vgg16(pretrained=pretrained)
     return_nodes = {
         "features.5": "0",
