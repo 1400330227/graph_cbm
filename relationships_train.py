@@ -8,21 +8,37 @@ from datasets.cub_dataset import CubDataset
 from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph_cbm import GraphCBM
+from graph_cbm.modeling.graph_cbm import GraphCBM, build_Graph_CBM
 from graph_cbm.modeling.relation.predictor import Predictor
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate, sg_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-def create_model(num_classes, relation_classes, n_tasks=200):
-    backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "save_weights/detector/resnet-fpn-model-best.pth"
-    detector = build_detector(backbone, num_classes, weights_path, use_relation=True, is_train=False)
-    predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
-                          feature_extractor=detector.roi_heads.box_head)
-    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, False)
-    return model
+def create_model(num_classes, relation_classes, n_tasks, args):
+    backbone_name = 'resnet50'
+    detector_weights_path = "save_weights/detector/resnet-fpn-model-best.pth"
+    weights_path = ""
+    use_c2ymodel = False
+    model = build_Graph_CBM(
+        backbone_name=backbone_name,
+        num_classes=num_classes,
+        relation_classes=relation_classes,
+        n_tasks=n_tasks,
+        detector_weights_path=detector_weights_path,
+        weights_path=weights_path,
+        use_c2ymodel=use_c2ymodel,
+    )
+
+    detector_params = model.detector.parameters()
+    predictor_params = model.predictor.parameters()
+
+    params = [
+        {"params": detector_params, "lr": args.lr * 0.01},  # 例如，主学习率的1% (1e-6)
+        {"params": predictor_params, "lr": args.lr}  # 例如, 1e-4
+    ]
+
+    return model, params
 
 
 def main(args):
@@ -74,12 +90,12 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
+    model, params = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks, args)
     model.to(device)
-    params = [p for p in model.parameters() if p.requires_grad]
+    # params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
         params,
-        lr=args.lr,
+        # lr=args.lr,
         momentum=args.momentum,
         weight_decay=args.weight_decay
     )
@@ -155,6 +171,7 @@ if __name__ == "__main__":
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
+    parser.add_argument('--n_tasks', default=200, type=int, help='n_tasks')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')

@@ -4,6 +4,8 @@ from torchvision.models.detection.faster_rcnn import TwoMLPHead, FastRCNNPredict
 from torchvision.models.detection.rpn import RPNHead, RegionProposalNetwork
 from torchvision.ops import MultiScaleRoIAlign
 
+from graph_cbm.modeling.detection.backbone import build_resnet50_backbone, build_mobilenet_backbone, \
+    build_efficientnet_backbone, build_vgg_backbone
 from graph_cbm.modeling.detection.generalized_rcnn import GeneralizedRCNN
 from graph_cbm.modeling.detection.roi_heads import RoIHeads
 from graph_cbm.modeling.detection.transform import GeneralizedRCNNTransform
@@ -106,16 +108,25 @@ class FasterRCNN(GeneralizedRCNN):
         super().__init__(backbone, rpn, roi_heads, transform)
 
 
-def build_detector(backbone, num_classes, weights_path="", use_relation=False, is_train=False):
-    model = FasterRCNN(backbone=backbone, num_classes=91 if is_train else num_classes, use_relation=use_relation)
+def build_detector(backbone_name='', num_classes=91, weights_path="", is_train=True):
+    if backbone_name == 'resnet50':
+        backbone = build_resnet50_backbone(pretrained=False)
+    elif backbone_name == 'mobilenet':
+        backbone = build_mobilenet_backbone(pretrained=False)
+    elif backbone_name == 'efficientnet':
+        backbone = build_efficientnet_backbone(pretrained=False)
+    elif backbone_name == 'squeezenet':
+        backbone = build_vgg_backbone(pretrained=False)
+    else:
+        backbone = build_resnet50_backbone(pretrained=False)
+
+    model = FasterRCNN(backbone=backbone, num_classes=91 if is_train else num_classes)
+    if is_train:
+        in_features = model.roi_heads.box_predictor.cls_score.in_features
+        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     if weights_path != "":
         weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
         model.load_state_dict(weights_dict)
-    if is_train:
-        in_features = model.roi_heads.box_predictor.cls_score.in_features
-        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
-    if use_relation:
-        for param in model.parameters():
-            param.requires_grad = False
+
     return model

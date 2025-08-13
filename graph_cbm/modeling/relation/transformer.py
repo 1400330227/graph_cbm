@@ -44,9 +44,42 @@ class TransformerEncoder(nn.Module):
         for block in self.blocks:
             x = block(x)
         x = self.ln(self.mlp(x))
-        # x = torch.concat([x[i, :num_objs[i], :] for i in range(len(num_objs))], dim=0)
         x = pad_packed_sequence(x, num_objs)
         return x
+
+class TransformerEdgeEncoder(nn.Module):
+    def __init__(
+            self,
+            # transformer
+            embedding_dim,
+            num_heads,
+            depth,
+            # linear
+            hidden_dim,
+    ):
+        super(TransformerEdgeEncoder, self).__init__()
+        self.embedding_dim = embedding_dim
+        self.num_heads = num_heads
+        self.depth = depth
+        self.hidden_dim = hidden_dim
+        self.blocks = nn.ModuleList()
+        for _ in range(depth):
+            block = Block(embedding_dim=embedding_dim, num_heads=num_heads)
+            self.blocks.append(block)
+        self.mlp = MLP(embedding_dim, embedding_dim // 2, hidden_dim, 1)
+        self.ln = nn.LayerNorm(hidden_dim)
+        self.cls_token = nn.Parameter(torch.randn(1, 1, embedding_dim))
+
+    def forward(self, x, num_objs):
+        x = pad_sequence(x.split(num_objs, dim=0), batch_first=True)
+        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+        x = torch.cat((cls_token, x), dim=1)
+        for block in self.blocks:
+            x = block(x)
+        x = self.ln(self.mlp(x))
+        x = x[:, 0, :]
+        return x
+
 
 
 class Attention(nn.Module):

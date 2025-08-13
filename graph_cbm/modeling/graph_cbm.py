@@ -4,6 +4,9 @@ import torch.nn.functional as F
 import torch.nn
 from torchvision.ops import boxes as box_ops
 from torch import nn
+
+from graph_cbm.modeling.detection.backbone import build_vgg_backbone, build_resnet50_backbone, build_mobilenet_backbone, \
+    build_efficientnet_backbone
 from graph_cbm.modeling.detection.detector import FasterRCNN
 from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.modeling.relation.predictor import Predictor
@@ -149,6 +152,8 @@ class GraphCBM(nn.Module):
             nn.ReLU(inplace=True),
             nn.BatchNorm2d(in_channels, momentum=0.01),
         ])
+
+        self.union_fusion_layer = nn.Linear(in_channels * 2, in_channels)
 
         if self.use_c2ymodel:
             self.c2y_model = C2yModel(num_classes, relation_classes, n_tasks, self.predictor.embedding_dim)
@@ -476,7 +481,7 @@ class GraphCBM(nn.Module):
         proposals, features, images, targets = self.detector(images, targets)
         if self.training:
             with torch.no_grad():
-                proposals, rel_labels, rel_pair_idxs, rel_binarys = self.gtbox_relsample(proposals, targets)
+                proposals, rel_labels, rel_pair_idxs, rel_binarys = self.select_training_samples(proposals, targets)
         else:
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.select_test_pairs(proposals)
@@ -503,17 +508,42 @@ class GraphCBM(nn.Module):
 
 
 def build_Graph_CBM(
-        detector,
-        predictor,
-        num_classes,
-        relation_classes,
-        n_tasks,
+        backbone_name,
+        num_classes,  # 目标检测的数量
+        relation_classes,  # 关系的数量
+        n_tasks,  # 分类的数量
+        detector_weights_path="",
         weights_path="",
         use_c2ymodel=False
 ):
+    if backbone_name == 'resnet50':
+        backbone = build_resnet50_backbone(pretrained=False)
+    elif backbone_name == 'mobilenet':
+        backbone = build_mobilenet_backbone(pretrained=False)
+    elif backbone_name == 'efficientnet':
+        backbone = build_efficientnet_backbone(pretrained=False)
+    elif backbone_name == 'squeezenet':
+        backbone = build_vgg_backbone(pretrained=False)
+    else:
+        backbone = build_resnet50_backbone(pretrained=False)
+
+    detector = FasterRCNN(backbone=backbone, num_classes=num_classes, use_relation=True)
+
+    out_channels = backbone.out_channels
+    resolution = detector.roi_heads.box_roi_pool.output_size[0]
+    feature_extractor_dim = out_channels * resolution ** 2
+
+    if detector_weights_path != "":
+        detector_weights = torch.load(detector_weights_path, map_location='cpu', weights_only=True)
+        detector_weights = detector_weights['model'] if 'model' in detector_weights else detector_weights
+        detector.load_state_dict(detector_weights)
+
+    predictor = Predictor(num_classes, relation_classes, feature_extractor_dim)
+
     model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, use_c2ymodel)
     if weights_path != "":
         weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
         model.load_state_dict(weights_dict)
+
     return model

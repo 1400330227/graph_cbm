@@ -12,12 +12,27 @@ from graph_cbm.utils.plot_curve import plot_map
 
 
 def create_model(num_classes, relation_classes, n_tasks=200):
-    backbone = build_resnet50_backbone(pretrained=False)
-    detector = build_detector(backbone, num_classes, use_relation=True, is_train=False)
-    predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
-                          feature_extractor=detector.roi_heads.box_head)
+    # backbone = build_resnet50_backbone(pretrained=False)
+    # detector = build_detector(backbone, num_classes, use_relation=True, is_train=False)
+    # predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
+    #                       feature_extractor=detector.roi_heads.box_head)
+    # weights_path = "save_weights/relations/relations-model-best.pth"
+    # model = build_Graph_CBM(detector, predictor, num_classes, relation_classes, n_tasks, weights_path)
+    # return model
+    backbone_name = 'resnet50'
+    detector_weights_path = ""
     weights_path = "save_weights/relations/relations-model-best.pth"
-    model = build_Graph_CBM(detector, predictor, num_classes, relation_classes, n_tasks, weights_path)
+    use_c2ymodel = False
+    model = build_Graph_CBM(
+        backbone_name=backbone_name,
+        num_classes=num_classes,
+        relation_classes=relation_classes,
+        n_tasks=n_tasks,
+        detector_weights_path=detector_weights_path,
+        weights_path=weights_path,
+        use_c2ymodel=use_c2ymodel,
+    )
+
     return model
 
 
@@ -63,6 +78,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda:1', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
+    parser.add_argument('--n_tasks', default=200, type=int, help='n_tasks')
     parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
