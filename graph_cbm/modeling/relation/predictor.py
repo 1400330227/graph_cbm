@@ -77,8 +77,6 @@ class Predictor(nn.Module):
         self.complex_path_classifier = nn.Linear(self.representation_dim * 2, relation_classes)
         self.direct_path_classifier = nn.Linear(self.representation_dim, relation_classes)
 
-        # self.global_ctx_proj = nn.Linear(hidden_dim, representation_dim)
-        # self.ctx_linear = nn.Linear(self.representation_dim, relation_classes)
 
     def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals):
         device = obj_logits[0].device
@@ -143,13 +141,9 @@ class Predictor(nn.Module):
         return torch.concat(boxes_info, dim=0)
 
     def forward(self, features, proposals, rel_pair_idxs, union_features, rel_labels):
-        # _, _, h, w = features.shape
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
 
-        # pe_layer = self.position_encoder((h, w)).unsqueeze(0)
-        # pe_layer = torch.repeat_interleave(pe_layer, features.shape[0], dim=0)
-        # box_features = features + pe_layer
         box_features = features
         box_features = self.feature_extractor(box_features)
 
@@ -201,12 +195,9 @@ class Predictor(nn.Module):
         visual_union_features = self.feature_extractor(union_features)
 
         # 通过逐元素相乘融合语义和视觉信息
-        # final_rep = semantic_rep * visual_union_features
         final_rep = torch.cat([semantic_rep, visual_union_features], dim=-1)
 
         # 8. 预测 rel_logits
-        # 这里的 `ctx_linear` 提供了一个残差连接或并行的分类路径
-        # + self.ctx_linear(semantic_rep)
         rel_logits = self.complex_path_classifier(final_rep) + self.direct_path_classifier(local_semantic_rep)
 
         # 9. 后续处理和损失计算
@@ -217,8 +208,6 @@ class Predictor(nn.Module):
 
         losses = {}
         if self.training:
-            # loss_relation, loss_refine = relation_loss(proposals, rel_labels, rel_logits, obj_logits)
-            # losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine)
             loss_relation = relation_loss(rel_labels, rel_logits)
             losses = dict(loss_rel=loss_relation)
         return box_features, result, losses
