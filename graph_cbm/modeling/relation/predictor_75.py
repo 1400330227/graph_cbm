@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from graph_cbm.modeling.relation.mamba import MambaEncoder
-from graph_cbm.modeling.relation.transformer import TransformerEncoder, TransformerEdgeEncoder
+
+from graph_cbm.modeling.relation.transformer import PositionEmbeddingRandom, TransformerEncoder, TransformerEdgeEncoder
 
 
 def relation_loss(rel_labels, relation_logits):
@@ -52,6 +52,7 @@ class Predictor(nn.Module):
         self.feature_extractor = FeatureExtractor(feature_extractor_dim, representation_dim)
         self.later_nms_pred_thres = later_nms_pred_thres
 
+        self.position_encoder = PositionEmbeddingRandom(num_pos_feats=embedding_dim // 2)
         self.lin_obj = nn.Linear(representation_dim + embedding_dim + 128, hidden_dim)
         self.lin_edge = nn.Linear(embedding_dim + hidden_dim, hidden_dim)
 
@@ -63,11 +64,8 @@ class Predictor(nn.Module):
         self.obj_embed1 = nn.Embedding(self.obj_classes, embedding_dim)
         self.obj_embed2 = nn.Embedding(self.obj_classes, embedding_dim)
 
-        self.obj_encoder = MambaEncoder(hidden_dim, depth=4, if_cls_token=False)
-        self.edge_encoder = MambaEncoder(hidden_dim, depth=4, if_cls_token=True)
-
-        # self.obj_encoder = TransformerEncoder(hidden_dim, num_heads, 4, hidden_dim)
-        # self.edge_encoder = TransformerEdgeEncoder(hidden_dim, num_heads, 4, hidden_dim)
+        self.obj_encoder = TransformerEncoder(hidden_dim, num_heads, 4, hidden_dim)
+        self.edge_encoder = TransformerEdgeEncoder(hidden_dim, num_heads, 4, hidden_dim)
 
         self.obj_classifier = nn.Linear(hidden_dim, obj_classes)
         self.edge_classifier = nn.Linear(self.representation_dim, relation_classes)
@@ -78,6 +76,7 @@ class Predictor(nn.Module):
 
         self.complex_path_classifier = nn.Linear(self.representation_dim * 2, relation_classes)
         self.direct_path_classifier = nn.Linear(self.representation_dim, relation_classes)
+
 
     def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals):
         device = obj_logits[0].device
