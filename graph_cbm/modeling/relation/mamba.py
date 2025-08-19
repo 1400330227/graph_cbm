@@ -10,6 +10,7 @@ from timm.models.layers import DropPath
 from timm.models.layers import trunc_normal_, lecun_normal_
 from mamba_ssm.modules.mamba_simple import Mamba
 
+from graph_cbm.modeling.relation.gcn import SpatialGCN
 from graph_cbm.modeling.relation.rope import VisionRotaryEmbeddingFast
 
 try:
@@ -19,10 +20,6 @@ except ImportError:
 
 
 def unpad_sequence(x, num_objs):
-    """
-    Recovers the original packed sequence from a padded batch.
-    This is the inverse of pad_sequence.
-    """
     recovered_chunks = []
     for i in range(len(num_objs)):
         seq_len = num_objs[i]
@@ -272,7 +269,7 @@ class MambaEncoder(nn.Module):
                 pt_seq_len=pt_hw_seq_len,
                 ft_seq_len=hw_seq_len
             )
-        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        # self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
         # TODO: release this comment
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
@@ -298,6 +295,8 @@ class MambaEncoder(nn.Module):
             ]
         )
 
+        self.layers_gcn = nn.ModuleList([SpatialGCN(embed_dim) for i in range(depth)])
+
         # output head
         self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
             embed_dim, eps=norm_epsilon, **factory_kwargs
@@ -307,7 +306,7 @@ class MambaEncoder(nn.Module):
 
         # original init
         # self.patch_embed.apply(segm_init_weights)
-        self.head.apply(segm_init_weights)
+        # self.head.apply(segm_init_weights)
         if if_abs_pos_embed:
             trunc_normal_(self.pos_embed, std=.02)
         if if_cls_token:
@@ -332,16 +331,21 @@ class MambaEncoder(nn.Module):
             for i, layer in enumerate(self.layers)
         }
 
-    def forward(self, x, num_objs):
+    def forward(self, x, num_objs, edge_index_list=None):
         x = pad_sequence(x.split(num_objs, dim=0), batch_first=True)  # [N, num_patches, 512]
         if self.if_cls_token:
             cls_token = self.cls_token.expand(x.shape[0], -1, -1)
             x = torch.cat((cls_token, x), dim=1)
+            # effective_num_objs = [n + 1 for n in num_objs]
+        # else:
+            # effective_num_objs = num_objs
 
         residual = None
         hidden_states = x
-        for layer in self.layers:
-            hidden_states, residual = layer(hidden_states, residual)
+        for layer, layer_gcn in zip(self.layers, self.layers_gcn):
+            hidden_states, residual, = layer(hidden_states, residual)
+            if not self.if_cls_token:
+                hidden_states = layer_gcn(hidden_states, edge_index_list, num_objs)
 
         if not self.fused_add_norm:
             if residual is None:
@@ -361,3 +365,4 @@ class MambaEncoder(nn.Module):
         else:
             hidden_states = unpad_sequence(hidden_states, num_objs)
         return hidden_states
+

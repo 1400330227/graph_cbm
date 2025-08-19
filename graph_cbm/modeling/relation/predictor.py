@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from graph_cbm.modeling.relation.mamba import MambaEncoder
-from graph_cbm.modeling.relation.transformer import TransformerEncoder, TransformerEdgeEncoder
+# from graph_cbm.modeling.relation.transformer import TransformerEncoder, TransformerEdgeEncoder
 
 
 def relation_loss(rel_labels, relation_logits, class_weights=None):
@@ -144,6 +144,7 @@ class Predictor(nn.Module):
     def forward(self, features, proposals, rel_pair_idxs, union_features, rel_labels, class_weights=None):
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
+        edge_index_list = [edge_pairs.t().contiguous() for edge_pairs in rel_pair_idxs]
 
         box_features = features
         box_features = self.feature_extractor(box_features)
@@ -158,7 +159,7 @@ class Predictor(nn.Module):
         obj_representation = self.lin_obj(obj_representation)
 
         # 1. 获取每个对象的精炼特征
-        obj_embedding = self.obj_encoder(obj_representation, num_objs)
+        obj_embedding = self.obj_encoder(obj_representation, num_objs, edge_index_list)
 
         obj_preds = proposal_labels
         obj_logits = proposal_logits
