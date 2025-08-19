@@ -41,6 +41,30 @@ def create_model(num_classes, relation_classes, n_tasks, args):
     return model, params
 
 
+def calculate_class_weights(dataset, num_classes, device):
+    class_counts = torch.zeros(num_classes, dtype=torch.int64)
+    total_possible_rels = 0
+    for _, target in dataset:
+        rel_matrix = target['relation']
+        num_objs = len(target['labels'])
+        total_possible_rels += num_objs * (num_objs - 1)
+        unique_rels = rel_matrix[rel_matrix > 0].unique()
+        for rel_idx in unique_rels:
+            class_counts[rel_idx] += (rel_matrix == rel_idx).sum()
+    total_fg_rels = class_counts.sum()
+    class_counts[0] = total_possible_rels - total_fg_rels
+    zero_counts_mask = class_counts == 0
+    class_counts_smoothed = class_counts.clone()
+    class_counts_smoothed[zero_counts_mask] = 1
+    log_counts = torch.log(class_counts_smoothed)
+    epsilon = 1e-6
+    weights = torch.max(log_counts) / (log_counts + epsilon)
+    background_weight_factor = 0.1
+    weights[0] = weights[0] * background_weight_factor
+    weights = weights / torch.sum(weights) * num_classes
+    return weights.to(device)
+
+
 def main(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print("Using {} device training.".format(device.type))
@@ -55,6 +79,7 @@ def main(args):
     #     raise FileNotFoundError("VOCdevkit dose not in path:'{}'.".format(VOC_root))
     # train_dataset = VOCDataSet(VOC_root, "2012", data_transform["train"], "train.txt")
     train_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
+    class_weights = calculate_class_weights(train_dataset, args.relation_classes + 1, device)
     train_sampler = None
     if args.aspect_ratio_group_factor >= 0:
         train_sampler = torch.utils.data.RandomSampler(train_dataset)
@@ -102,7 +127,7 @@ def main(args):
     scaler = torch.cuda.amp.GradScaler() if args.amp else None
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
-        T_0=50,
+        T_0=10,
         T_mult=2,
         eta_min=1e-6,
         last_epoch=-1
@@ -132,7 +157,8 @@ def main(args):
             epoch=epoch,
             print_freq=50,
             warmup=True,
-            scaler=scaler
+            scaler=scaler,
+            class_weights=class_weights,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
@@ -188,7 +214,7 @@ if __name__ == "__main__":
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
-    parser.add_argument("--mode", default='predcls',  choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
+    parser.add_argument("--mode", default='predcls', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
                         help="Use torch.cuda.amp for mixed precision training")
     args = parser.parse_args()
     print(args)

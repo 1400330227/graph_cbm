@@ -5,8 +5,8 @@ from graph_cbm.modeling.relation.mamba import MambaEncoder
 from graph_cbm.modeling.relation.transformer import TransformerEncoder, TransformerEdgeEncoder
 
 
-def relation_loss(rel_labels, relation_logits):
-    criterion_loss = nn.CrossEntropyLoss()
+def relation_loss(rel_labels, relation_logits, class_weights=None):
+    criterion_loss = nn.CrossEntropyLoss(weight=class_weights)
     relation_logits = torch.concat(relation_logits, dim=0)
     rel_labels = torch.concat(rel_labels, dim=0)
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
@@ -141,7 +141,7 @@ class Predictor(nn.Module):
             boxes_info.append(info)
         return torch.concat(boxes_info, dim=0)
 
-    def forward(self, features, proposals, rel_pair_idxs, union_features, rel_labels):
+    def forward(self, features, proposals, rel_pair_idxs, union_features, rel_labels, class_weights=None):
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
 
@@ -209,6 +209,6 @@ class Predictor(nn.Module):
 
         losses = {}
         if self.training:
-            loss_relation = relation_loss(rel_labels, rel_logits)
+            loss_relation = relation_loss(rel_labels, rel_logits, class_weights)
             losses = dict(loss_rel=loss_relation)
         return box_features, result, losses

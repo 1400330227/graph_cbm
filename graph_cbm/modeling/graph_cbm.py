@@ -477,7 +477,7 @@ class GraphCBM(nn.Module):
 
         return union_features
 
-    def forward(self, images, targets=None):
+    def forward(self, images, targets=None, class_weights=None):
         proposals, features, images, targets = self.detector(images, targets)
         if self.training:
             with torch.no_grad():
@@ -493,7 +493,8 @@ class GraphCBM(nn.Module):
             proposals,
             rel_pair_idxs,
             union_features,
-            rel_labels
+            rel_labels,
+            class_weights
         )
         result = relation_graphs
         losses = {}

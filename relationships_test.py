@@ -21,7 +21,7 @@ def create_model(num_classes, relation_classes, n_tasks=200):
     # return model
     backbone_name = 'resnet50'
     detector_weights_path = ""
-    weights_path = "save_weights/relations/relations-model-75.pth"
+    weights_path = "save_weights/relations/relations-model-best.pth"
     use_c2ymodel = False
     model = build_Graph_CBM(
         backbone_name=backbone_name,
