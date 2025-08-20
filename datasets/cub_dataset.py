@@ -93,7 +93,7 @@ class CubDataset(Dataset):
             iscrowd.append(int(shape["difficult"]))
         boxes = torch.as_tensor(boxes, dtype=torch.float32)
         labels = torch.as_tensor(labels, dtype=torch.int64)
-        class_label = torch.as_tensor(class_label, dtype=torch.int64)
+        class_label = torch.as_tensor([class_label], dtype=torch.int64)
         iscrowd = torch.as_tensor(iscrowd, dtype=torch.int64)
         image_id = torch.tensor([img_id])
         area = (boxes[:, 3] - boxes[:, 1]) * (boxes[:, 2] - boxes[:, 0])

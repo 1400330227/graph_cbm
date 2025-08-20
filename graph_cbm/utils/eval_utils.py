@@ -188,7 +188,7 @@ def cbm_evaluate(model, data_loader, device, mode):
         model_time = time.time() - model_time
 
         res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
-        sg_val_batch(targets, outputs, sg_evaluator[mode])
+        cbm_val_batch(targets, outputs, sg_evaluator[mode], cbm_evaluator)
 
         evaluator_time = time.time()
         coco_evaluator.update(res)
@@ -236,7 +236,7 @@ def sg_val_batch(targets, outputs, evaluator):
         evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
 
 
-def cbm_val_batch(targets, outputs, evaluator):
+def cbm_val_batch(targets, outputs, sg_evaluator, cbm_evaluator):
     for i, (target, output) in enumerate(zip(targets, outputs)):
         gt_entry = {
             'gt_classes': target["labels"].detach().cpu().numpy(),
@@ -254,10 +254,10 @@ def cbm_val_batch(targets, outputs, evaluator):
             'rel_scores': output["pred_rel_scores"].detach().cpu().numpy(),
             'pred_rel_labels': output["pred_rel_labels"].detach().cpu().numpy(),
         }
-        y_probs = output["y_prob"].detach().cpu().numpy()
-        y_true = target["class_label"].detach().cpu().numpy()
-        evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
-        evaluator.compute_bin_accuracy(y_probs, y_true)
+        sg_evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
+    y_probs = torch.concat([output["y_logit"] for output in outputs], dim=0)
+    y_true = torch.concat([target["class_label"] for target in targets], dim=0).cpu().detach().numpy()
+    cbm_evaluator.compute_bin_accuracy(y_probs, y_true)
 
 
 def _get_iou_types(model):

@@ -16,13 +16,29 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
 def create_model(num_classes, relation_classes, n_tasks=200):
-    backbone = build_resnet50_backbone(pretrained=False)
-    detector = build_detector(backbone, num_classes, use_relation=True)
-    predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
-                          feature_extractor=detector.roi_heads.box_head)
+    backbone_name = 'resnet50'
+    detector_weights_path = ""
     weights_path = "save_weights/relations/relations-model-best.pth"
-    model = build_Graph_CBM(detector, predictor, num_classes, relation_classes, n_tasks, weights_path, use_c2ymodel=True)
-    return model
+    model = build_Graph_CBM(
+        backbone_name=backbone_name,
+        num_classes=num_classes,
+        relation_classes=relation_classes,
+        n_tasks=n_tasks,
+        detector_weights_path=detector_weights_path,
+        weights_path=weights_path,
+        use_c2ymodel=True,
+    )
+    detector_params = model.detector.parameters()
+    predictor_params = model.predictor.parameters()
+    c2y_model_params = model.c2y_model.parameters()
+
+    params = [
+        {"params": detector_params, "lr": args.lr * 0.01},
+        {"params": predictor_params, "lr": args.lr * 0.01},
+        {"params": c2y_model_params, "lr": args.lr},
+    ]
+
+    return model, params
 
 
 def main(args):
@@ -70,9 +86,9 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
+    model, params = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
     model.to(device)
-    params = [p for p in model.parameters() if p.requires_grad]
+    # params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
         params,
         lr=args.lr,
@@ -82,7 +98,7 @@ def main(args):
     scaler = torch.cuda.amp.GradScaler() if args.amp else None
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
-        T_0=50,
+        T_0=10,
         T_mult=2,
         eta_min=1e-6,
         last_epoch=-1
@@ -147,15 +163,16 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description=__doc__)
-    parser.add_argument('--device', default='cuda:1', help='device')
+    parser.add_argument('--device', default='cuda:0', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
+    parser.add_argument('--backbone_name', default='resnet50', help='backbone_name')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--epochs', default=1000, type=int, metavar='N', help='number of total epochs to run')
-    parser.add_argument('--lr', default=0.01, type=float,
+    parser.add_argument('--lr', default=0.0005, type=float,
                         help='initial learning rate, 0.02 is the default value for training '
                              'on 8 gpus and 2 images_per_gpu')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
@@ -167,7 +184,7 @@ if __name__ == "__main__":
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
-    parser.add_argument("--mode", default='predcls',  choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
+    parser.add_argument("--mode", default='predcls', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
                         help="Use torch.cuda.amp for mixed precision training")
     args = parser.parse_args()
     print(args)

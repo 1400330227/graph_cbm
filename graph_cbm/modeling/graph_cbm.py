@@ -1,64 +1,19 @@
+import numpy as np
 import torch
 import numpy.random as npr
 import torch.nn.functional as F
 import torch.nn
-from torchvision.ops import boxes as box_ops
+from torch.nn.utils.rnn import pad_sequence
+from torchvision.ops import boxes as box_ops, MultiScaleRoIAlign
 from torch import nn
 
 from graph_cbm.modeling.detection.backbone import build_vgg_backbone, build_resnet50_backbone, build_mobilenet_backbone, \
     build_efficientnet_backbone
 from graph_cbm.modeling.detection.detector import FasterRCNN
 from graph_cbm.modeling.detection.transform import resize_boxes
+from graph_cbm.modeling.relation.gcn import SpatialGCN
 from graph_cbm.modeling.relation.predictor import Predictor
 from graph_cbm.utils.boxes import box_union
-from torch_geometric.nn import RGCNConv
-
-
-class RGCNConvLayer(torch.nn.Module):
-    def __init__(
-            self,
-            num_relations,
-            input_dim=1280,
-            hidden_dim=512,
-            out_dim=256,
-            num_layers=2,
-            dropout=0.5,
-            num_bases=None,
-            pooling='mean'
-    ):
-        super().__init__()
-        self.convs = torch.nn.ModuleList()
-        self.lin_obj = nn.Linear(input_dim, 512)
-        self.convs.append(RGCNConv(512, hidden_dim, num_relations, num_bases))
-        for _ in range(num_layers - 2):
-            self.convs.append(RGCNConv(hidden_dim, hidden_dim, num_relations, num_bases))
-        self.convs.append(RGCNConv(hidden_dim, out_dim, num_relations, num_bases))
-        self.dropout = dropout
-        self.pooling = pooling
-
-    def forward(self, x, edge_index, edge_type, num_nodes):
-        x = self.lin_obj(x)
-        for conv in self.convs[:-1]:
-            x = conv(x, edge_index, edge_type)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = self.convs[-1](x, edge_index, edge_type)
-        x = self.graph_pooling(x, num_nodes)
-        return x
-
-    def graph_pooling(self, x, num_nodes):
-        node_splits = torch.split(x, num_nodes, dim=0)
-        pooled = []
-        for nodes in node_splits:
-            if self.pooling == 'mean':
-                pooled.append(torch.mean(nodes, dim=0))
-            elif self.pooling == 'sum':
-                pooled.append(torch.sum(nodes, dim=0))
-            elif self.pooling == 'max':
-                pooled.append(torch.max(nodes, dim=0)[0])
-            else:
-                raise ValueError(f"Unknown pooling method: {self.pooling}")
-        return torch.stack(pooled, dim=0)
 
 
 def task_loss(y_logits, y, n_tasks, task_class_weights=None):
@@ -73,39 +28,44 @@ class C2yModel(nn.Module):
         self.num_classes = num_classes
         self.relation_classes = relation_classes
         self.n_tasks = n_tasks
-        self.features = RGCNConvLayer(relation_classes)
+        self.features = SpatialGCN(embedding_dim)
+        self.embedding_dim = embedding_dim
         self.classifier = nn.Sequential(*[
-            nn.Linear(256, 256),
+            nn.Linear(512, 256),
             nn.Dropout(p=0.5),
             nn.Linear(256, n_tasks)
         ])
-
+        self.proj = nn.Linear(1280, embedding_dim)
         self.obj_embed = nn.Embedding(num_classes, embedding_dim)
 
-    def forward(self, box_features, relation_graphs, edge_index, edge_type, num_nodes, targets):
-        num_nodes = [relation["pred_labels"].shape[0] for relation in relation_graphs]
-        pred_labels = torch.concat([relation["pred_labels"] for relation in relation_graphs], dim=0)
-        x = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
-        edge_index = torch.concat([relation["rel_pair_idx"] for relation in relation_graphs], dim=0).permute(1, 0)
-        edge_type = torch.concat([relation["rel_labels"] for relation in relation_graphs], dim=0)
+    def forward(self, box_features, relation_graphs, targets):
+        pred_labels = torch.concat([relation["labels"] for relation in relation_graphs], dim=0)
+        edge_index = [r["rel_pair_idxs"].permute(1, 0) for r in relation_graphs]
+        edge_type = [torch.as_tensor(r["pred_rel_labels"], dtype=torch.float) for r in relation_graphs]
+        num_nodes = [r["labels"].shape[0] for r in relation_graphs]
 
-        x = self.features(x, edge_index, edge_type, num_nodes)
-        y_logits = self.classifier(x)
-        y_logits = y_logits.split(num_nodes, dim=0)
-        result = self.post_processor(y_logits, relation_graphs)
+        x = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
+        x = self.proj(x)
+        x = pad_sequence(x.split(num_nodes, dim=0), batch_first=True)
+        # x = list(x.split(num_nodes, dim=0))
+        refined_node_features = self.features(x, edge_index, num_nodes, edge_type)
+        avg_pool_features = torch.mean(refined_node_features, dim=1)
+        max_pool_features = torch.max(refined_node_features, dim=1).values
+        graph_features = torch.cat([avg_pool_features, max_pool_features], dim=1)
+        y_logits = self.classifier(graph_features)
+
+        result = self.post_processor(y_logits.split([1] * len(num_nodes), dim=0), relation_graphs)
         loss = {}
         if self.training:
-            y = torch.as_tensor([target['class_label'] for target in targets], dtype=torch.int64,
-                                device=y_logits.device)
-            loss_task = task_loss(x, y, self.n_tasks)
+            y = torch.as_tensor([t['class_label'] for t in targets], dtype=torch.int64, device=y_logits.device)
+            loss_task = task_loss(y_logits, y, self.n_tasks)
             loss['loss_task'] = loss_task
         return result, loss
 
     def post_processor(self, y_logits, relation_graphs):
         result = []
         for i, (y_logit, relation_graph) in enumerate(zip(y_logits, relation_graphs)):
-            y_prob = F.softmax(y_logit, -1)
-            relation_graph["y_prob"] = y_prob
+            y_logit = F.softmax(y_logit, -1)
             relation_graph["y_logit"] = y_logit
             result.append(relation_graph)
         return result
@@ -116,9 +76,7 @@ class GraphCBM(nn.Module):
             self,
             detector: FasterRCNN,
             predictor: Predictor,
-            num_classes: int,
-            relation_classes: int,
-            n_tasks: int,
+            c2y_model: C2yModel,
             use_c2ymodel=False,
             batch_size_per_image=1024,
             positive_fraction=0.25,
@@ -126,7 +84,8 @@ class GraphCBM(nn.Module):
             fg_thres=0.5,
     ):
         super().__init__()
-        self.box_roi_pool = detector.roi_heads.box_roi_pool
+        self.box_roi_pool = MultiScaleRoIAlign(featmap_names=["0", "1", "2", "3"], output_size=7, sampling_ratio=2)
+        # self.box_roi_pool = detector.roi_heads.box_roi_pool
         # self.box_head = detector.roi_heads.box_head
         self.detector = detector
         self.predictor = predictor
@@ -136,7 +95,7 @@ class GraphCBM(nn.Module):
         self.num_pos_per_img = int(batch_size_per_image * positive_fraction)
         self.num_sample_per_gt_rel = num_sample_per_gt_rel
 
-        self.obj_embed = nn.Embedding(num_classes, self.predictor.embedding_dim)
+        # self.obj_embed = nn.Embedding(num_classes, self.predictor.embedding_dim)
 
         self.use_c2ymodel = use_c2ymodel
 
@@ -154,9 +113,7 @@ class GraphCBM(nn.Module):
         ])
 
         self.union_fusion_layer = nn.Linear(in_channels * 2, in_channels)
-
-        if self.use_c2ymodel:
-            self.c2y_model = C2yModel(num_classes, relation_classes, n_tasks, self.predictor.embedding_dim)
+        self.c2y_model = c2y_model
 
     def motif_rel_fg_bg_sampling(self, device, tgt_rel_matrix, ious, is_match, rel_possibility):
         """
@@ -376,52 +333,6 @@ class GraphCBM(nn.Module):
             rel_sym_binarys.append(binary_rel)
         return proposals, rel_labels, rel_idx_pairs, rel_sym_binarys
 
-    # def gtbox_relsample(self, proposals, targets):
-    #     device = proposals[0]["boxes"].device
-    #     num_pos_per_img = int(self.batch_size_per_image * self.positive_fraction)
-    #     rel_idx_pairs = []
-    #     rel_labels = []
-    #     rel_sym_binarys = []
-    #     for img_id, (proposal, target) in enumerate(zip(proposals, targets)):
-    #         prp_box = proposal["boxes"]
-    #         tgt_box = target["boxes"]
-    #         num_prp = prp_box.shape[0]
-    #
-    #         assert prp_box.shape[0] == tgt_box.shape[0]
-    #         tgt_rel_matrix = target["relation"]
-    #         tgt_pair_idxs = torch.nonzero(tgt_rel_matrix > 0)
-    #         assert tgt_pair_idxs.shape[1] == 2
-    #         tgt_head_idxs = tgt_pair_idxs[:, 0].contiguous().view(-1)
-    #         tgt_tail_idxs = tgt_pair_idxs[:, 1].contiguous().view(-1)
-    #         tgt_rel_labs = tgt_rel_matrix[tgt_head_idxs, tgt_tail_idxs].contiguous().view(-1)
-    #
-    #         # sym_binary_rels
-    #         binary_rel = torch.zeros((num_prp, num_prp), device=device).long()
-    #         binary_rel[tgt_head_idxs, tgt_tail_idxs] = 1
-    #         binary_rel[tgt_tail_idxs, tgt_head_idxs] = 1
-    #         rel_sym_binarys.append(binary_rel)
-    #
-    #         rel_possibility = (torch.ones((num_prp, num_prp), device=device).long() -
-    #                            torch.eye(num_prp, device=device).long())
-    #         rel_possibility[tgt_head_idxs, tgt_tail_idxs] = 0
-    #         tgt_bg_idxs = torch.nonzero(rel_possibility > 0)
-    #
-    #         if tgt_pair_idxs.shape[0] > num_pos_per_img:
-    #             perm = torch.randperm(tgt_pair_idxs.shape[0], device=device)[:num_pos_per_img]
-    #             tgt_pair_idxs = tgt_pair_idxs[perm]
-    #             tgt_rel_labs = tgt_rel_labs[perm]
-    #         num_fg = min(tgt_pair_idxs.shape[0], num_pos_per_img)
-    #         num_bg = self.batch_size_per_image - num_fg
-    #         perm = torch.randperm(tgt_bg_idxs.shape[0], device=device)[:num_bg]
-    #         tgt_bg_idxs = tgt_bg_idxs[perm]
-    #
-    #         img_rel_idxs = torch.cat((tgt_pair_idxs, tgt_bg_idxs), dim=0)
-    #         img_rel_labels = torch.cat((tgt_rel_labs.long(), torch.zeros(tgt_bg_idxs.shape[0], device=device).long()),
-    #                                    dim=0).contiguous().view(-1)
-    #         rel_idx_pairs.append(img_rel_idxs)
-    #         rel_labels.append(img_rel_labels)
-    #     return proposals, rel_labels, rel_idx_pairs, rel_sym_binarys
-
     def select_test_pairs(self, proposals):
         device = proposals[0]["boxes"].device
         rel_pair_idxs = []
@@ -500,9 +411,9 @@ class GraphCBM(nn.Module):
         losses = {}
         losses.update(predictor_losses)
         if self.use_c2ymodel:
-            cbm_logits, loss_task = self.c2y_model(box_features, relation_graphs, targets)
+            cbm_graphs, loss_task = self.c2y_model(box_features, relation_graphs, targets)
             losses.update(loss_task)
-            result = cbm_logits
+            result = cbm_graphs
         if self.training:
             return losses
         return result
@@ -539,12 +450,17 @@ def build_Graph_CBM(
         detector_weights = detector_weights['model'] if 'model' in detector_weights else detector_weights
         detector.load_state_dict(detector_weights)
 
-    predictor = Predictor(num_classes, relation_classes, feature_extractor_dim)
+    embedding_dim = 256
+    predictor = Predictor(num_classes, relation_classes, feature_extractor_dim, embedding_dim=embedding_dim)
 
-    model = GraphCBM(detector, predictor, num_classes, relation_classes, n_tasks, use_c2ymodel)
+    c2y_model = None
+    if use_c2ymodel:
+        c2y_model = C2yModel(num_classes, relation_classes, n_tasks, embedding_dim=embedding_dim)
+
+    model = GraphCBM(detector, predictor, c2y_model, use_c2ymodel)
     if weights_path != "":
         weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
-        model.load_state_dict(weights_dict)
+        model.load_state_dict(weights_dict, strict=False)
 
     return model
