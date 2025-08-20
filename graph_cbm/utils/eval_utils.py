@@ -12,7 +12,7 @@ from .sg_eval import BasicSceneGraphEvaluator
 
 
 def train_one_epoch(model, optimizer, data_loader, device, epoch,
-                    print_freq=50, warmup=False, scaler=None, class_weights=None):
+                    print_freq=50, warmup=False, scaler=None, relation_weights=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -31,7 +31,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch,
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         with torch.amp.autocast(device_type='cuda', enabled=scaler is not None):
-            loss_dict = model(images, targets, class_weights)
+            loss_dict = model(images, targets, relation_weights)
             losses = sum(loss for loss in loss_dict.values())
 
         # reduce losses over all GPUs for logging purpose

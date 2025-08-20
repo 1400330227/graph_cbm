@@ -28,17 +28,46 @@ def create_model(num_classes, relation_classes, n_tasks=200):
         weights_path=weights_path,
         use_c2ymodel=True,
     )
-    detector_params = model.detector.parameters()
-    predictor_params = model.predictor.parameters()
+    # detector_params = model.detector.parameters()
+    # predictor_params = model.predictor.parameters()
     c2y_model_params = model.c2y_model.parameters()
 
+    for param in model.detector.parameters():
+        param.requires_grad = False
+    for param in model.predictor.parameters():
+        param.requires_grad = False
+
     params = [
-        {"params": detector_params, "lr": args.lr * 0.01},
-        {"params": predictor_params, "lr": args.lr * 0.01},
+        # {"params": detector_params, "lr": args.lr * 0.01},
+        # {"params": predictor_params, "lr": args.lr * 0.01},
         {"params": c2y_model_params, "lr": args.lr},
     ]
 
     return model, params
+
+
+def calculate_class_weights(dataset, num_classes, device):
+    class_counts = torch.zeros(num_classes, dtype=torch.int64)
+    total_possible_rels = 0
+    for _, target in dataset:
+        rel_matrix = target['relation']
+        num_objs = len(target['labels'])
+        total_possible_rels += num_objs * (num_objs - 1)
+        unique_rels = rel_matrix[rel_matrix > 0].unique()
+        for rel_idx in unique_rels:
+            class_counts[rel_idx] += (rel_matrix == rel_idx).sum()
+    total_fg_rels = class_counts.sum()
+    class_counts[0] = total_possible_rels - total_fg_rels
+    zero_counts_mask = class_counts == 0
+    class_counts_smoothed = class_counts.clone()
+    class_counts_smoothed[zero_counts_mask] = 1
+    log_counts = torch.log(class_counts_smoothed)
+    epsilon = 1e-6
+    weights = torch.max(log_counts) / (log_counts + epsilon)
+    background_weight_factor = 0.1
+    weights[0] = weights[0] * background_weight_factor
+    weights = weights / torch.sum(weights) * num_classes
+    return weights.to(device)
 
 
 def main(args):
@@ -51,6 +80,7 @@ def main(args):
         "val": transforms.Compose([transforms.ToTensor()])
     }
     train_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
+    class_weights = calculate_class_weights(train_dataset, args.relation_classes + 1, device)
     train_sampler = None
     if args.aspect_ratio_group_factor >= 0:
         train_sampler = torch.utils.data.RandomSampler(train_dataset)
@@ -128,7 +158,8 @@ def main(args):
             epoch=epoch,
             print_freq=50,
             warmup=True,
-            scaler=scaler
+            scaler=scaler,
+            relation_weights=class_weights,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)

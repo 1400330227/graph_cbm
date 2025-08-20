@@ -79,7 +79,7 @@ def main(args):
     #     raise FileNotFoundError("VOCdevkit dose not in path:'{}'.".format(VOC_root))
     # train_dataset = VOCDataSet(VOC_root, "2012", data_transform["train"], "train.txt")
     train_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
-    class_weights = calculate_class_weights(train_dataset, args.relation_classes + 1, device)
+    relation_weights = calculate_class_weights(train_dataset, args.relation_classes + 1, device)
     train_sampler = None
     if args.aspect_ratio_group_factor >= 0:
         train_sampler = torch.utils.data.RandomSampler(train_dataset)
@@ -158,7 +158,7 @@ def main(args):
             print_freq=50,
             warmup=True,
             scaler=scaler,
-            class_weights=class_weights,
+            relation_weights=relation_weights,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
