@@ -53,5 +53,5 @@ class CBMEvaluator:
                 avg_value = np.mean(values)
                 self.result_means[metric] = avg_value
                 std_value = np.std(values)
-                print(f"{metric.capitalize():<10}: {avg_value:.4f} ± {std_value:.4f} (mean ± std)")
+                print(f" Average {metric.capitalize():<10}: {avg_value:.4f} ± {std_value:.4f} (mean ± std)")
         # print("=" * 40)

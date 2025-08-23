@@ -32,6 +32,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch,
 
         with torch.amp.autocast(device_type='cuda', enabled=scaler is not None):
             loss_dict = model(images, targets, relation_weights)
+            loss_dict = {'loss_task': loss_dict['loss_task']}
             losses = sum(loss for loss in loss_dict.values())
 
         # reduce losses over all GPUs for logging purpose
@@ -255,7 +256,7 @@ def cbm_val_batch(targets, outputs, sg_evaluator, cbm_evaluator):
             'pred_rel_labels': output["pred_rel_labels"].detach().cpu().numpy(),
         }
         sg_evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
-    y_probs = torch.concat([output["y_logit"] for output in outputs], dim=0)
+    y_probs = torch.stack([output["y_logit"] for output in outputs], dim=0)
     y_true = torch.concat([target["class_label"] for target in targets], dim=0).cpu().detach().numpy()
     cbm_evaluator.compute_bin_accuracy(y_probs, y_true)
 

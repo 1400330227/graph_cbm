@@ -7,6 +7,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torchvision.ops import boxes as box_ops, MultiScaleRoIAlign
 from torch import nn
 
+from graph_cbm.modeling.c2y_model import C2yModel
 from graph_cbm.modeling.detection.backbone import build_vgg_backbone, build_resnet50_backbone, build_mobilenet_backbone, \
     build_efficientnet_backbone
 from graph_cbm.modeling.detection.detector import FasterRCNN
@@ -16,59 +17,61 @@ from graph_cbm.modeling.relation.predictor import Predictor
 from graph_cbm.utils.boxes import box_union
 
 
-def task_loss(y_logits, y, n_tasks, task_class_weights=None):
-    loss_task = (torch.nn.CrossEntropyLoss(weight=task_class_weights)
-                 if n_tasks > 1 else torch.nn.BCEWithLogitsLoss(weight=task_class_weights))
-    return loss_task(y_logits if y_logits.shape[-1] > 1 else y_logits.reshape(-1), y)
+# def task_loss(y_logits, y, n_tasks, task_class_weights=None):
+#     loss_task = (torch.nn.CrossEntropyLoss(weight=task_class_weights)
+#                  if n_tasks > 1 else torch.nn.BCEWithLogitsLoss(weight=task_class_weights))
+#     return loss_task(y_logits if y_logits.shape[-1] > 1 else y_logits.reshape(-1), y)
 
 
-class C2yModel(nn.Module):
-    def __init__(self, num_classes, relation_classes, n_tasks, embedding_dim):
-        super(C2yModel, self).__init__()
-        self.num_classes = num_classes
-        self.relation_classes = relation_classes
-        self.n_tasks = n_tasks
-        self.features = SpatialGCN(embedding_dim)
-        self.embedding_dim = embedding_dim
-        self.classifier = nn.Sequential(*[
-            nn.Linear(512, 256),
-            nn.Dropout(p=0.5),
-            nn.Linear(256, n_tasks)
-        ])
-        self.proj = nn.Linear(1280, embedding_dim)
-        self.obj_embed = nn.Embedding(num_classes, embedding_dim)
-
-    def forward(self, box_features, relation_graphs, targets):
-        pred_labels = torch.concat([relation["labels"] for relation in relation_graphs], dim=0)
-        edge_index = [r["rel_pair_idxs"].permute(1, 0) for r in relation_graphs]
-        edge_type = [torch.as_tensor(r["pred_rel_labels"], dtype=torch.float) for r in relation_graphs]
-        num_nodes = [r["labels"].shape[0] for r in relation_graphs]
-
-        x = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
-        x = self.proj(x)
-        x = pad_sequence(x.split(num_nodes, dim=0), batch_first=True)
-        # x = list(x.split(num_nodes, dim=0))
-        refined_node_features = self.features(x, edge_index, num_nodes, edge_type)
-        avg_pool_features = torch.mean(refined_node_features, dim=1)
-        max_pool_features = torch.max(refined_node_features, dim=1).values
-        graph_features = torch.cat([avg_pool_features, max_pool_features], dim=1)
-        y_logits = self.classifier(graph_features)
-
-        result = self.post_processor(y_logits.split([1] * len(num_nodes), dim=0), relation_graphs)
-        loss = {}
-        if self.training:
-            y = torch.as_tensor([t['class_label'] for t in targets], dtype=torch.int64, device=y_logits.device)
-            loss_task = task_loss(y_logits, y, self.n_tasks)
-            loss['loss_task'] = loss_task
-        return result, loss
-
-    def post_processor(self, y_logits, relation_graphs):
-        result = []
-        for i, (y_logit, relation_graph) in enumerate(zip(y_logits, relation_graphs)):
-            y_logit = F.softmax(y_logit, -1)
-            relation_graph["y_logit"] = y_logit
-            result.append(relation_graph)
-        return result
+# class C2yModel(nn.Module):
+#     def __init__(self, num_classes, relation_classes, n_tasks, embedding_dim):
+#         super(C2yModel, self).__init__()
+#         self.num_classes = num_classes
+#         self.relation_classes = relation_classes
+#         self.n_tasks = n_tasks
+#         self.features = SpatialGCN(embedding_dim)
+#         self.embedding_dim = embedding_dim
+#         self.classifier = nn.Sequential(*[
+#             nn.Linear(512, 256),
+#             nn.Dropout(p=0.5),
+#             nn.Linear(256, n_tasks)
+#         ])
+#         self.proj = nn.Linear(1280, embedding_dim)
+#         self.obj_embed = nn.Embedding(num_classes, embedding_dim)
+#
+#     def forward(self, box_features, relation_graphs, targets):
+#         pred_labels = torch.concat([relation["labels"] for relation in relation_graphs], dim=0)
+#         edge_index = [r["rel_pair_idxs"].permute(1, 0) for r in relation_graphs]
+#         edge_type = [torch.as_tensor(r["pred_rel_labels"], dtype=torch.float) for r in relation_graphs]
+#         num_nodes = [r["labels"].shape[0] for r in relation_graphs]
+#
+#         x = torch.concat((box_features, self.obj_embed(pred_labels.long())), dim=-1)
+#         x = self.proj(x)
+#         x = pad_sequence(x.split(num_nodes, dim=0), batch_first=True)
+#
+#         refined_node_features = self.features(x, edge_index, num_nodes, edge_type)
+#
+#         avg_pool_features = torch.mean(refined_node_features, dim=1)
+#         max_pool_features = torch.max(refined_node_features, dim=1).values
+#
+#         graph_features = torch.cat([avg_pool_features, max_pool_features], dim=1)
+#         y_logits = self.classifier(graph_features)
+#
+#         result = self.post_processor(y_logits.split([1] * len(num_nodes), dim=0), relation_graphs)
+#         loss = {}
+#         if self.training:
+#             y = torch.as_tensor([t['class_label'] for t in targets], dtype=torch.int64, device=y_logits.device)
+#             loss_task = task_loss(y_logits, y, self.n_tasks)
+#             loss['loss_task'] = loss_task
+#         return result, loss
+#
+#     def post_processor(self, y_logits, relation_graphs):
+#         result = []
+#         for i, (y_logit, relation_graph) in enumerate(zip(y_logits, relation_graphs)):
+#             y_logit = F.softmax(y_logit, -1)
+#             relation_graph["y_logit"] = y_logit
+#             result.append(relation_graph)
+#         return result
 
 
 class GraphCBM(nn.Module):
@@ -399,7 +402,7 @@ class GraphCBM(nn.Module):
 
         roi_features = self.box_roi_pool(features, [t["boxes"] for t in proposals], images.image_sizes)
         union_features = self.union_feature_extractor(images, features, proposals, rel_pair_idxs)
-        box_features, relation_graphs, predictor_losses = self.predictor(
+        relation_features, relation_graphs, predictor_losses = self.predictor(
             roi_features,
             proposals,
             rel_pair_idxs,
@@ -411,7 +414,7 @@ class GraphCBM(nn.Module):
         losses = {}
         losses.update(predictor_losses)
         if self.use_c2ymodel:
-            cbm_graphs, loss_task = self.c2y_model(box_features, relation_graphs, targets)
+            cbm_graphs, loss_task = self.c2y_model(relation_features, relation_graphs, targets)
             losses.update(loss_task)
             result = cbm_graphs
         if self.training:
@@ -450,12 +453,12 @@ def build_Graph_CBM(
         detector_weights = detector_weights['model'] if 'model' in detector_weights else detector_weights
         detector.load_state_dict(detector_weights)
 
-    embedding_dim = 256
-    predictor = Predictor(num_classes, relation_classes, feature_extractor_dim, embedding_dim=embedding_dim)
+    representation_dim = 1024
+    predictor = Predictor(num_classes, relation_classes, feature_extractor_dim, representation_dim)
 
     c2y_model = None
     if use_c2ymodel:
-        c2y_model = C2yModel(num_classes, relation_classes, n_tasks, embedding_dim=embedding_dim)
+        c2y_model = C2yModel(representation_dim, num_classes, relation_classes, n_tasks)
 
     model = GraphCBM(detector, predictor, c2y_model, use_c2ymodel)
     if weights_path != "":

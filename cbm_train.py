@@ -15,7 +15,7 @@ from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, Gr
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-def create_model(num_classes, relation_classes, n_tasks=200):
+def create_model(num_classes, relation_classes, n_tasks):
     backbone_name = 'resnet50'
     detector_weights_path = ""
     weights_path = "save_weights/relations/relations-model-best.pth"
@@ -28,19 +28,38 @@ def create_model(num_classes, relation_classes, n_tasks=200):
         weights_path=weights_path,
         use_c2ymodel=True,
     )
-    # detector_params = model.detector.parameters()
-    # predictor_params = model.predictor.parameters()
-    c2y_model_params = model.c2y_model.parameters()
 
-    for param in model.detector.parameters():
+    for param in model.parameters():
         param.requires_grad = False
-    for param in model.predictor.parameters():
-        param.requires_grad = False
+
+    for param in model.c2y_model.parameters():
+        param.requires_grad = True
+
+    # scene_classifier_params = list(model.c2y_model.parameters())
+    # scene_classifier_param_ids = set(id(p) for p in scene_classifier_params)
+    #
+    # for param in scene_classifier_params:
+    #     param.requires_grad = True
+    #
+    # predictor_finetune_params = []
+    # modules_to_finetune = [
+    #     model.predictor.edge_encoder,
+    #     model.predictor.post_cat,
+    #     model.predictor.semantic_fusion_layer,
+    #     model.predictor.complex_path_classifier,
+    #     model.predictor.direct_path_classifier,
+    # ]
+    # for module in modules_to_finetune:
+    #     for param in module.parameters():
+    #         if id(param) not in scene_classifier_param_ids:
+    #             param.requires_grad = True
+    #             predictor_finetune_params.append(param)
+
+    params_to_train = filter(lambda p: p.requires_grad, model.parameters())
 
     params = [
-        # {"params": detector_params, "lr": args.lr * 0.01},
-        # {"params": predictor_params, "lr": args.lr * 0.01},
-        {"params": c2y_model_params, "lr": args.lr},
+        # {"params": predictor_finetune_params, "lr": args.lr * 0.01},
+        {"params": params_to_train, "lr": args.lr}
     ]
 
     return model, params
@@ -116,7 +135,7 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model, params = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
+    model, params = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks)
     model.to(device)
     # params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
@@ -179,7 +198,7 @@ def main(args):
         }
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        test_acc = sum(sgg_info.values()) / len(sgg_info)
+        test_acc = cbm_info['accuracy']
         if test_acc > best_acc:
             best_acc = test_acc
             torch.save(save_files, "save_weights/classification/classification-model-best.pth")
@@ -199,6 +218,7 @@ if __name__ == "__main__":
     parser.add_argument('--backbone_name', default='resnet50', help='backbone_name')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
+    parser.add_argument('--n_tasks', default=200, type=int, help='n_tasks')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
