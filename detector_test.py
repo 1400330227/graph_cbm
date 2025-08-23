@@ -9,10 +9,10 @@ from graph_cbm.utils.eval_utils import evaluate
 from graph_cbm.utils.plot_curve import plot_map
 
 
-def create_model(num_classes, relation_classes):
-    backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "save_weights/detector/resnet-fpn-model-best.pth"
-    model = build_detector(backbone, num_classes, weights_path, is_train=False)
+def create_model(num_classes, args):
+    backbone_name = args.backbone
+    weights_path = f"save_weights/detector/{args.backbone}-fpn-model-best.pth"
+    model = build_detector(backbone_name, num_classes, weights_path, is_train=False)
     return model
 
 
@@ -34,7 +34,7 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
+    model = create_model(args.num_classes + 1, args)
     model.to(device)
 
     val_map = []
@@ -54,6 +54,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', default='cuda:1', help='device')
+    parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=40, type=int, help='relation_classes')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
