@@ -11,13 +11,11 @@ from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, Gr
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-# weights_path = "./checkpoints/fasterrcnn_resnet50_fpn.pth"
-
-
-def create_model(num_classes, relation_classes):
-    backbone = build_resnet50_backbone(pretrained=False)
-    weights_path = "save_weights/detector/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
-    model = build_detector(backbone, num_classes, weights_path, is_train=True)
+def create_model(num_classes, args):
+    backbone_name = args.backbone_name
+    # weights_path = "save_weights/detector/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
+    weights_path = ''
+    model = build_detector(backbone_name, num_classes, weights_path, is_train=True)
     return model
 
 
@@ -70,7 +68,7 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
+    model = create_model(args.num_classes + 1, args)
     model.to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
@@ -148,9 +146,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', default='cuda:2', help='device')
+    parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=40, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')

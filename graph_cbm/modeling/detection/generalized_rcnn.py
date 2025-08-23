@@ -22,6 +22,7 @@ class GeneralizedRCNN(nn.Module):
             self,
             images: list[torch.Tensor],
             targets: Optional[list[dict[str, torch.Tensor]]] = None,
+            weights=None,
     ):
 
         original_image_sizes: list[tuple[int, int]] = []

@@ -142,3 +142,17 @@ class BackboneWithFPN(nn.Module):
         x = self.body(x)
         x = self.fpn(x)
         return x
+
+
+class SwinFPNAdapter(nn.Module):
+    def __init__(self, backbone: nn.Module):
+        super().__init__()
+        self.backbone = backbone
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        features = self.backbone(x)
+        # Permute the dimensions for each feature map
+        # from (N, H, W, C) to (N, C, H, W)
+        for name, feature in features.items():
+            features[name] = feature.permute(0, 3, 1, 2)
+        return features

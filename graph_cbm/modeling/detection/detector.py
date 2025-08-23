@@ -5,7 +5,7 @@ from torchvision.models.detection.rpn import RPNHead, RegionProposalNetwork
 from torchvision.ops import MultiScaleRoIAlign
 
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone, build_mobilenet_backbone, \
-    build_efficientnet_backbone, build_vgg_backbone
+    build_efficientnet_backbone, build_vgg_backbone, build_swin_transformer_backbone
 from graph_cbm.modeling.detection.generalized_rcnn import GeneralizedRCNN
 from graph_cbm.modeling.detection.roi_heads import RoIHeads
 from graph_cbm.modeling.detection.transform import GeneralizedRCNNTransform
@@ -117,6 +117,8 @@ def build_detector(backbone_name='', num_classes=91, weights_path="", is_train=T
         backbone = build_efficientnet_backbone(pretrained=False)
     elif backbone_name == 'squeezenet':
         backbone = build_vgg_backbone(pretrained=False)
+    elif backbone_name == 'swin_transformer':
+        backbone = build_swin_transformer_backbone(pretrained=True)
     else:
         backbone = build_resnet50_backbone(pretrained=False)
 
@@ -127,6 +129,6 @@ def build_detector(backbone_name='', num_classes=91, weights_path="", is_train=T
     if weights_path != "":
         weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
-        model.load_state_dict(weights_dict)
+        model.load_state_dict(weights_dict, strict=False)
 
     return model
