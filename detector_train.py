@@ -12,7 +12,7 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
 def create_model(num_classes, args):
-    backbone_name = args.backbone_name
+    backbone_name = args.backbone
     # weights_path = "save_weights/detector/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
     weights_path = ''
     model = build_detector(backbone_name, num_classes, weights_path, is_train=True)
@@ -133,7 +133,7 @@ def main(args):
         val_map.append(coco_info[1])  # pascal mAP
         if (coco_info[0] > best_acc):
             best_acc = coco_info[0]
-            torch.save(save_files, "save_weights/detector/resnet-fpn-model-best.pth")
+            torch.save(save_files, f"save_weights/detector/{args.backbone}-fpn-model-best.pth")
         # torch.save(save_files, "save_weights/detector/resnet-fpn-model-{}.pth".format(epoch))
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
