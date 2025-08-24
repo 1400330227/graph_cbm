@@ -11,17 +11,10 @@ from graph_cbm.utils.eval_utils import sg_evaluate
 from graph_cbm.utils.plot_curve import plot_map
 
 
-def create_model(num_classes, relation_classes, n_tasks=200):
-    # backbone = build_resnet50_backbone(pretrained=False)
-    # detector = build_detector(backbone, num_classes, use_relation=True, is_train=False)
-    # predictor = Predictor(obj_classes=num_classes, relation_classes=relation_classes,
-    #                       feature_extractor=detector.roi_heads.box_head)
-    # weights_path = "save_weights/relations/relations-model-best.pth"
-    # model = build_Graph_CBM(detector, predictor, num_classes, relation_classes, n_tasks, weights_path)
-    # return model
-    backbone_name = 'resnet50'
+def create_model(num_classes, relation_classes, n_tasks, args):
+    backbone_name = args.backbone
     detector_weights_path = ""
-    weights_path = "save_weights/relations/relations-model-best.pth"
+    weights_path = f"save_weights/relations/{args.backbone}-model-best.pth"
     use_c2ymodel = False
     model = build_Graph_CBM(
         backbone_name=backbone_name,
@@ -32,7 +25,6 @@ def create_model(num_classes, relation_classes, n_tasks=200):
         weights_path=weights_path,
         use_c2ymodel=use_c2ymodel,
     )
-
     return model
 
 
@@ -55,7 +47,7 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
+    model = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks, args)
     model.to(device)
 
     val_map = []
@@ -76,6 +68,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--device', default='cuda:1', help='device')
+    parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--n_tasks', default=200, type=int, help='n_tasks')

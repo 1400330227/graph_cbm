@@ -16,8 +16,8 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
 def create_model(num_classes, relation_classes, n_tasks, args):
-    backbone_name = 'resnet50'
-    detector_weights_path = "save_weights/detector/resnet-fpn-model-best.pth"
+    backbone_name = args.backbone
+    detector_weights_path = f"save_weights/detector/{args.backbone}-fpn-model-best.pth"
     weights_path = ""
     use_c2ymodel = False
     model = build_Graph_CBM(
@@ -181,7 +181,7 @@ def main(args):
         test_acc = sum(sgg_info.values()) / len(sgg_info)
         if test_acc > best_acc:
             best_acc = test_acc
-            torch.save(save_files, "save_weights/relations/relations-model-best.pth")
+            torch.save(save_files, f"save_weights/relations/{args.backbone}-model-best.pth")
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
     if len(val_map) != 0:
@@ -195,6 +195,7 @@ if __name__ == "__main__":
         description=__doc__)
     parser.add_argument('--device', default='cuda:1', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
+    parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
     parser.add_argument('--n_tasks', default=200, type=int, help='n_tasks')

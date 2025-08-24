@@ -51,7 +51,7 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(num_classes=args.num_classes + 1, relation_classes=args.relation_classes + 1)
+    model = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks)
     model.to(device)
 
     val_map = []
@@ -75,6 +75,7 @@ if __name__ == "__main__":
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--backbone_name', default='resnet50', help='backbone_name')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
+    parser.add_argument('--n_tasks', default=200, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
