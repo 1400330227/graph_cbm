@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
 
 try:
-    from torch_geometric.nn import GCNConv
+    from torch_geometric.nn import GCNConv, RGCNConv
     from torch_geometric.utils import add_self_loops, remove_self_loops
 except ImportError:
     print("PyTorch Geometric not found. Please install it to use the GCN module.")
@@ -21,9 +21,9 @@ def unpad_sequence(x, num_objs):
     return recovered_x
 
 
-class SpatialGCN(nn.Module):
+class GCN(nn.Module):
     def __init__(self, node_feature_dim: int, num_layers: int = 2, dropout_prob: float = 0.3):
-        super(SpatialGCN, self).__init__()
+        super(GCN, self).__init__()
         if GCNConv is None:
             raise ImportError("GCNConv could not be imported. Please ensure PyTorch Geometric is installed correctly.")
         self.layers = nn.ModuleList()
@@ -32,39 +32,66 @@ class SpatialGCN(nn.Module):
         self.activation = nn.ReLU()
         self.dropout = nn.Dropout(p=dropout_prob)
 
-    def forward(self, node_features, edge_index_list, num_nodes_list, edge_weight_list=None) -> torch.Tensor:
+    def forward(self, node_features, edge_index_list, num_nodes_list) -> torch.Tensor:
         flat_node_features = unpad_sequence(node_features, num_nodes_list)
         if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
             return node_features
-        if edge_weight_list is not None:
-            assert len(edge_index_list) == len(edge_weight_list)
         edge_index_batch = []
-        edge_weight_batch = []
         offset = 0
         for i, edge_index in enumerate(edge_index_list):
             edge_index_batch.append(edge_index + offset)
-            if edge_weight_list is not None:
-                edge_weight_batch.append(edge_weight_list[i])
             offset += num_nodes_list[i]
         edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
-        if edge_weight_list is not None:
-            edge_weight_batch = torch.cat(edge_weight_batch, dim=0).contiguous()
-        else:
-            edge_weight_batch = None
-        edge_index_with_self_loops, edge_weight_with_self_loops = add_self_loops(
-            edge_index=edge_index_batch,
-            edge_attr=edge_weight_batch,
-            fill_value=1.0,
-            num_nodes=node_features.size(0)
-        )
+        edge_index_with_self_loops, _ = add_self_loops(edge_index_batch, num_nodes=node_features.size(0))
         x = flat_node_features
         for layer in self.layers:
-            gcn_update = layer(x, edge_index_with_self_loops, edge_weight_with_self_loops)
+            gcn_update = layer(x, edge_index_with_self_loops)
             x = x + self.dropout(self.activation(gcn_update))
         refined_flat_features = x
         refined_features_list = refined_flat_features.split(num_nodes_list, dim=0)
         refined_batched_sequence = pad_sequence(refined_features_list, batch_first=True, padding_value=0.0)
         return refined_batched_sequence
+
+class RGCN(nn.Module):
+    def __init__(self, node_feature_dim: int, num_relations: int, num_layers: int = 2, dropout_prob: float = 0.3):
+        super(RGCN, self).__init__()
+        if RGCNConv is None:
+            raise ImportError("RGCNConv could not be imported. Please ensure PyTorch Geometric is installed correctly.")
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.layers.append(RGCNConv(node_feature_dim, node_feature_dim, num_relations))
+        self.activation = nn.ReLU()
+        self.dropout = nn.Dropout(p=dropout_prob)
+
+    def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list) -> torch.Tensor:
+        flat_node_features = unpad_sequence(node_features, num_nodes_list)
+        if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
+            return node_features
+
+        assert len(edge_index_list) == len(edge_type_list)
+
+        edge_index_batch = []
+        edge_type_batch = []
+        offset = 0
+        for i, edge_index in enumerate(edge_index_list):
+            edge_index_batch.append(edge_index + offset)
+            edge_type_batch.append(edge_type_list[i])
+            offset += num_nodes_list[i]
+
+        edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
+        edge_type_batch = torch.cat(edge_type_batch, dim=0).contiguous()
+
+        x = flat_node_features
+        for layer in self.layers:
+            gcn_update = layer(x, edge_index_batch, edge_type_batch)
+            x = x + self.dropout(self.activation(gcn_update))
+
+        refined_flat_features = x
+        refined_features_list = refined_flat_features.split(num_nodes_list, dim=0)
+        refined_batched_sequence = pad_sequence(refined_features_list, batch_first=True, padding_value=0.0)
+
+        return refined_batched_sequence
+
 
 if __name__ == '__main__':
     # 1. 定义模型参数
@@ -99,7 +126,7 @@ if __name__ == '__main__':
     print("-" * 20)
 
     # 4. 实例化并调用模型
-    spatial_gcn_model = SpatialGCN(node_feature_dim=FEATURE_DIM, num_layers=NUM_GCN_LAYERS)
+    spatial_gcn_model = GCN(node_feature_dim=FEATURE_DIM, num_layers=NUM_GCN_LAYERS)
 
     refined_sequence_output = spatial_gcn_model(
         node_features=batched_sequence_input,

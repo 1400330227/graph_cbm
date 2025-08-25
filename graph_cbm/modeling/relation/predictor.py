@@ -5,7 +5,7 @@ from torch import nn
 from torchvision.ops import boxes as box_ops, MultiScaleRoIAlign
 
 from graph_cbm.modeling.detection.transform import resize_boxes
-from graph_cbm.modeling.relation.mamba import MambaEncoder
+from graph_cbm.modeling.relation.mamba import MambaRelationEncoder
 from graph_cbm.utils.boxes import box_union
 
 
@@ -91,8 +91,8 @@ class Predictor(nn.Module):
         self.obj_embed1 = nn.Embedding(self.obj_classes, embedding_dim)
         self.obj_embed2 = nn.Embedding(self.obj_classes, embedding_dim)
 
-        self.obj_encoder = MambaEncoder(hidden_dim, depth=4, if_cls_token=False)
-        self.edge_encoder = MambaEncoder(hidden_dim, depth=4, if_cls_token=True)
+        self.obj_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=False)
+        self.edge_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=True)
 
         self.obj_classifier = nn.Linear(hidden_dim, obj_classes)
         self.edge_classifier = nn.Linear(self.representation_dim, relation_classes)
@@ -370,7 +370,7 @@ class Predictor(nn.Module):
 
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
-        edge_index_list = [edge_pairs.t().contiguous() for edge_pairs in rel_pair_idxs]
+        # edge_index_list = [edge_pairs.t().contiguous() for edge_pairs in rel_pair_idxs]
 
         # box_features = features
         box_features = self.feature_extractor(box_features)
@@ -385,7 +385,7 @@ class Predictor(nn.Module):
         obj_representation = self.lin_obj(obj_representation)
 
         # 1. 获取每个对象的精炼特征
-        obj_embedding = self.obj_encoder(obj_representation, num_objs, edge_index_list)
+        obj_embedding = self.obj_encoder(obj_representation, num_objs)
 
         obj_preds = proposal_labels
         obj_logits = proposal_logits
@@ -394,7 +394,7 @@ class Predictor(nn.Module):
         # 2. 准备 edge_encoder 的输入，并获取全局上下文
         features_for_edge_encoder = torch.concat((obj_embedding, obj_embed2), dim=-1)
         features_for_edge_encoder = self.lin_edge(features_for_edge_encoder)
-        global_context = self.edge_encoder(features_for_edge_encoder, num_objs)  # Shape: (batch_size, hidden_dim)
+        global_context = self.edge_encoder(features_for_edge_encoder, num_objs)
 
         # 3. 提取每个关系对的局部特征（head & tail）
         head_obj_reps = obj_embedding.split(num_objs, dim=0)
@@ -436,7 +436,7 @@ class Predictor(nn.Module):
         losses = {}
         rel_features = None
         if self.use_c2ymodel:
-            rel_features = obj_embedding
+            rel_features = box_features
             return rel_features, result, losses
         else:
             if self.training:

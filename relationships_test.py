@@ -3,10 +3,7 @@ import datetime
 import torch
 from datasets import transforms
 from datasets.cub_dataset import CubDataset
-from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
-from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph_cbm import GraphCBM, build_Graph_CBM
-from graph_cbm.modeling.relation.predictor import Predictor
+from graph_cbm.modeling.graph_cbm import build_Graph_CBM
 from graph_cbm.utils.eval_utils import sg_evaluate
 from graph_cbm.utils.plot_curve import plot_map
 

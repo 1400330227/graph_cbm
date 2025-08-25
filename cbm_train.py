@@ -32,8 +32,11 @@ def create_model(num_classes, relation_classes, n_tasks, args):
     predictor_params = model.predictor.parameters()
     c2y_model_params = model.c2y_model.parameters()
 
+    for param in detector_params:
+        param.requires_grad = False
+
     params = [
-        {"params": detector_params, "lr": args.lr * 0.01},
+        # {"params": detector_params, "lr": args.lr * 0.01},
         {"params": predictor_params, "lr": args.lr * 0.01},
         {"params": c2y_model_params, "lr": args.lr}
     ]

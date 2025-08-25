@@ -2,11 +2,10 @@ import torch
 from torch import nn
 from graph_cbm.modeling.c2y_model import C2yModel
 from graph_cbm.modeling.detection.backbone import (
-    build_vgg_backbone, build_resnet50_backbone, build_mobilenet_backbone, build_efficientnet_backbone)
+    build_vgg_backbone, build_resnet50_backbone, build_mobilenet_backbone, build_efficientnet_backbone,
+    build_swin_transformer_backbone)
 from graph_cbm.modeling.detection.detector import FasterRCNN
-from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.modeling.relation.predictor import Predictor
-from graph_cbm.utils.boxes import box_union
 
 
 class GraphCBM(nn.Module):
@@ -49,6 +48,8 @@ def build_Graph_CBM(
         backbone = build_efficientnet_backbone(pretrained=False)
     elif backbone_name == 'squeezenet':
         backbone = build_vgg_backbone(pretrained=False)
+    elif backbone_name == 'swin_transformer':
+        backbone = build_swin_transformer_backbone(pretrained=False)
     else:
         backbone = build_resnet50_backbone(pretrained=False)
 

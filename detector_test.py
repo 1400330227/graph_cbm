@@ -67,4 +67,5 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', default=6, type=int, metavar='N',
                         help='batch size when training.')
     args = parser.parse_args()
+    print(args)
     main(args)

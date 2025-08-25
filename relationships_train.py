@@ -9,8 +9,7 @@ from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.modeling.graph_cbm import GraphCBM, build_Graph_CBM
-from graph_cbm.modeling.relation.predictor import Predictor
-from graph_cbm.utils.eval_utils import train_one_epoch, evaluate, sg_evaluate
+from graph_cbm.utils.eval_utils import train_one_epoch, sg_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 

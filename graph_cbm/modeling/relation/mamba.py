@@ -9,9 +9,11 @@ from torch.nn.utils.rnn import pad_sequence
 from timm.models.layers import DropPath
 from timm.models.layers import trunc_normal_, lecun_normal_
 from mamba_ssm.modules.mamba_simple import Mamba
+from torch_geometric.nn import global_mean_pool, global_max_pool
 
-from graph_cbm.modeling.relation.gcn import SpatialGCN
+from graph_cbm.modeling.relation.gcn import GCN, RGCN
 from graph_cbm.modeling.relation.rope import VisionRotaryEmbeddingFast
+from graph_cbm.modeling.relation.transformer import MLPBlock, MLP
 
 try:
     from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
@@ -189,7 +191,7 @@ def segm_init_weights(m):
         nn.init.ones_(m.weight)
 
 
-class MambaEncoder(nn.Module):
+class MambaRelationEncoder(nn.Module):
     def __init__(
             self,
             img_size=224,
@@ -214,7 +216,7 @@ class MambaEncoder(nn.Module):
             pt_hw_seq_len=14,
             if_bidirectional=False,
             final_pool_type='none',
-            if_abs_pos_embed=True,
+            if_abs_pos_embed=False,
             if_rope=False,
             if_rope_residual=False,
             flip_img_sequences_ratio=-1.,
@@ -295,7 +297,7 @@ class MambaEncoder(nn.Module):
             ]
         )
 
-        self.layers_gcn = nn.ModuleList([SpatialGCN(embed_dim) for i in range(depth)])
+        # self.layers_gcn = nn.ModuleList([GCN(embed_dim) for i in range(depth)])
 
         # output head
         self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
@@ -331,21 +333,22 @@ class MambaEncoder(nn.Module):
             for i, layer in enumerate(self.layers)
         }
 
-    def forward(self, x, num_objs, edge_index_list=None):
+    def forward(self, x, num_objs):
         x = pad_sequence(x.split(num_objs, dim=0), batch_first=True)  # [N, num_patches, 512]
         if self.if_cls_token:
             cls_token = self.cls_token.expand(x.shape[0], -1, -1)
             x = torch.cat((cls_token, x), dim=1)
             # effective_num_objs = [n + 1 for n in num_objs]
         # else:
-            # effective_num_objs = num_objs
+        # effective_num_objs = num_objs
 
         residual = None
         hidden_states = x
-        for layer, layer_gcn in zip(self.layers, self.layers_gcn):
+        # for layer, layer_gcn in zip(self.layers, self.layers_gcn):
+        for layer in self.layers:
             hidden_states, residual, = layer(hidden_states, residual)
-            if not self.if_cls_token:
-                hidden_states = layer_gcn(hidden_states, edge_index_list, num_objs)
+            # if not self.if_cls_token:
+            #     hidden_states = layer_gcn(hidden_states, edge_index_list, num_objs)
 
         if not self.fused_add_norm:
             if residual is None:
@@ -366,3 +369,132 @@ class MambaEncoder(nn.Module):
             hidden_states = unpad_sequence(hidden_states, num_objs)
         return hidden_states
 
+
+class MambaGraph(nn.Module):
+    def __init__(
+            self,
+            depth=24,
+            embed_dim=512,
+            d_state=16,
+            num_classes=21,
+            num_relations=43,
+            ssm_cfg=None,
+            drop_path_rate=0.1,
+            norm_epsilon: float = 1e-5,
+            rms_norm: bool = True,
+            initializer_cfg=None,
+            fused_add_norm=True,
+            residual_in_fp32=True,
+            device=None,
+            dtype=None,
+            if_cls_token=True,
+            **kwargs
+    ):
+        factory_kwargs = {"device": device, "dtype": dtype}
+        # add factory_kwargs into kwargs
+        kwargs.update(factory_kwargs)
+        super().__init__()
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.if_cls_token = if_cls_token
+        self.num_tokens = 1 if if_cls_token else 0
+
+        self.num_classes = num_classes
+        self.num_relations = num_relations
+        self.d_model = self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+
+        if if_cls_token:
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+            self.num_tokens = 1
+
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+
+        # TODO: release this comment
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        # import ipdb;ipdb.set_trace()
+        inter_dpr = [0.0] + dpr
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
+        # transformer blocks
+        self.layers = nn.ModuleList(
+            [
+                create_block(
+                    embed_dim,
+                    d_state=d_state,
+                    ssm_cfg=ssm_cfg,
+                    norm_epsilon=norm_epsilon,
+                    rms_norm=rms_norm,
+                    residual_in_fp32=residual_in_fp32,
+                    fused_add_norm=fused_add_norm,
+                    layer_idx=i,
+                    drop_path=inter_dpr[i],
+                    **factory_kwargs,
+                )
+                for i in range(depth)
+            ]
+        )
+
+        self.layers_rgcn = nn.ModuleList([RGCN(embed_dim, num_relations) for i in range(depth)])
+
+        self.skipcat = nn.ModuleList([
+            MLP(embed_dim * 2, embed_dim, embed_dim, 2)
+            for i in range(depth - 2)
+        ])
+
+        # output head
+        self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
+            embed_dim, eps=norm_epsilon, **factory_kwargs
+        )
+
+        if if_cls_token:
+            trunc_normal_(self.cls_token, std=.02)
+
+        # mamba init
+        self.apply(
+            partial(
+                _init_weights,
+                n_layer=depth,
+                **(initializer_cfg if initializer_cfg is not None else {}),
+            )
+        )
+
+    def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
+        return {
+            i: layer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
+            for i, layer in enumerate(self.layers)
+        }
+
+    def forward(self, x, num_objs, edge_index_list, edge_type_list):
+        x = pad_sequence(x.split(num_objs, dim=0), batch_first=True)  # [N, num_patches, 512]
+        batch_vector = torch.cat([
+            torch.full((n,), i, dtype=torch.long, device=x.device)
+            for i, n in enumerate(num_objs)
+        ], dim=0)
+        residual = None
+        hidden_states = x
+        last_output = []
+        for ind, (layer, layer_rgcn) in enumerate(zip(self.layers, self.layers_rgcn)):
+            last_output.append(hidden_states)
+            if ind > 1:
+                states = torch.cat([hidden_states, last_output[ind - 2]], dim=-1)
+                hidden_states = self.skipcat[ind - 2](states)
+            hidden_states, residual = layer(hidden_states, residual)
+            hidden_states = layer_rgcn(hidden_states, edge_index_list, edge_type_list, num_objs)
+
+        if not self.fused_add_norm:
+            if residual is None:
+                residual = hidden_states
+            else:
+                residual = residual + hidden_states
+            hidden_states = self.norm_f(residual.to(dtype=self.norm_f.weight.dtype))
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
+            hidden_states = fused_add_norm_fn(
+                hidden_states, self.norm_f.weight, self.norm_f.bias,
+                eps=self.norm_f.eps, residual=residual, prenorm=False,
+                residual_in_fp32=self.residual_in_fp32,
+            )
+        hidden_states = unpad_sequence(hidden_states, num_objs)
+        avg_pool = global_mean_pool(hidden_states, batch_vector)
+        max_pool = global_max_pool(hidden_states, batch_vector)
+        graph_features = torch.cat([avg_pool, max_pool], dim=1)
+        return graph_features

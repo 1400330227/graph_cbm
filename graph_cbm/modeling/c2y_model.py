@@ -1,9 +1,9 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn.utils.rnn import pad_sequence
-
 from torch_geometric.nn import RGCNConv, global_mean_pool, global_max_pool
+
+from graph_cbm.modeling.relation.mamba import MambaGraph
 
 
 def task_loss(y_logits, y, n_tasks, task_class_weights=None):
@@ -21,42 +21,46 @@ class C2yModel(nn.Module):
         self.representation_dim = representation_dim
         self.hidden_dim = hidden_dim
         self.dropout = nn.Dropout(p=0.5)
-        self.conv1 = RGCNConv(hidden_dim, self.hidden_dim, num_relations=relation_classes)
+        self.conv1 = RGCNConv(representation_dim, self.hidden_dim, num_relations=relation_classes)
         self.conv2 = RGCNConv(self.hidden_dim, self.hidden_dim, num_relations=relation_classes)
 
         self.classifier = nn.Sequential(*[
-            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
+            nn.Linear(self.representation_dim * 2, self.hidden_dim),
             nn.ReLU(),
             nn.Dropout(p=0.5),
             nn.Linear(self.hidden_dim, n_tasks)
         ])
 
+        self.mamba_graph = MambaGraph(embed_dim=representation_dim, depth=4)
+
     def forward(self, relation_features, relation_graphs, targets):
         edge_index_list = [rg['rel_pair_idxs'].t().contiguous() for rg in relation_graphs]
-        edge_type = torch.cat([rg['pred_rel_labels'] for rg in relation_graphs], dim=0)
+        edge_type = [rg['pred_rel_labels'] for rg in relation_graphs]
         num_nodes_list = [rg['labels'].size(0) for rg in relation_graphs]
 
-        edge_index_batch = []
-        offset = 0
-        for i, edge_index in enumerate(edge_index_list):
-            edge_index_batch.append(edge_index + offset)
-            offset += num_nodes_list[i]
-        edge_index_batch = torch.cat(edge_index_batch, dim=1)
+        graph_features = self.mamba_graph(relation_features, num_nodes_list, edge_index_list, edge_type)
 
-        batch_vector = torch.cat([
-            torch.full((n,), i, dtype=torch.long, device=relation_features.device)
-            for i, n in enumerate(num_nodes_list)
-        ], dim=0)
-
-        x = relation_features
-        x = F.relu(self.conv1(x, edge_index_batch, edge_type))
-        x = self.dropout(x)
-        x = F.relu(self.conv2(x, edge_index_batch, edge_type))
-        x = self.dropout(x)
-
-        avg_pool = global_mean_pool(x, batch_vector)
-        max_pool = global_max_pool(x, batch_vector)
-        graph_features = torch.cat([avg_pool, max_pool], dim=1)
+        # edge_index_batch = []
+        # offset = 0
+        # for i, edge_index in enumerate(edge_index_list):
+        #     edge_index_batch.append(edge_index + offset)
+        #     offset += num_nodes_list[i]
+        # edge_index_batch = torch.cat(edge_index_batch, dim=1)
+        #
+        # batch_vector = torch.cat([
+        #     torch.full((n,), i, dtype=torch.long, device=relation_features.device)
+        #     for i, n in enumerate(num_nodes_list)
+        # ], dim=0)
+        #
+        # x = relation_features
+        # x = F.relu(self.conv1(x, edge_index_batch, edge_type))
+        # x = self.dropout(x)
+        # x = F.relu(self.conv2(x, edge_index_batch, edge_type))
+        # x = self.dropout(x)
+        #
+        # avg_pool = global_mean_pool(x, batch_vector)
+        # max_pool = global_max_pool(x, batch_vector)
+        # graph_features = torch.cat([avg_pool, max_pool], dim=1)
         y_logits = self.classifier(graph_features)
 
         result = self.post_processor(y_logits, relation_graphs)
