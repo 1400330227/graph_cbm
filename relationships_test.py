@@ -86,7 +86,7 @@ if __name__ == "__main__":
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
-    parser.add_argument("--mode", default='sgdet', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
+    parser.add_argument("--mode", default='predcls', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
                         help="Use torch.cuda.amp for mixed precision training")
     args = parser.parse_args()
     print(args)

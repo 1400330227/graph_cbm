@@ -47,6 +47,7 @@ class TransformerEncoder(nn.Module):
         x = pad_packed_sequence(x, num_objs)
         return x
 
+
 class TransformerEdgeEncoder(nn.Module):
     def __init__(
             self,
@@ -81,6 +82,78 @@ class TransformerEdgeEncoder(nn.Module):
         return x
 
 
+class CrossAttentionFusion(nn.Module):
+    def __init__(self, representation_dim, hidden_dim, num_heads=8, dropout=0.1):
+        super(CrossAttentionFusion, self).__init__()
+        self.representation_dim = representation_dim
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = hidden_dim // num_heads
+
+        assert self.head_dim * num_heads == hidden_dim, "hidden_dim must be divisible by num_heads"
+
+        # 线性变换层
+        self.local_query = nn.Linear(representation_dim, hidden_dim)
+        self.global_key = nn.Linear(hidden_dim, hidden_dim)
+        self.global_value = nn.Linear(hidden_dim, hidden_dim)
+
+        # 输出层
+        self.output_proj = nn.Linear(hidden_dim, representation_dim)
+        self.dropout = nn.Dropout(dropout)
+
+        # 层归一化
+        self.norm1 = nn.LayerNorm(representation_dim)
+        self.norm2 = nn.LayerNorm(representation_dim)
+
+        # FFN
+        self.ffn = nn.Sequential(
+            nn.Linear(representation_dim, representation_dim * 4),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(representation_dim * 4, representation_dim)
+        )
+
+    def forward(self, local_features, global_features):
+        """
+        local_features: [batch_size, representation_dim] 作为Query
+        global_features: [batch_size, hidden_dim] 作为Key和Value
+        """
+        batch_size = local_features.size(0)
+
+        # 保存残差连接
+        residual = local_features
+
+        # 线性变换
+        Q = self.local_query(local_features)  # [batch_size, hidden_dim]
+        K = self.global_key(global_features)  # [batch_size, hidden_dim]
+        V = self.global_value(global_features)  # [batch_size, hidden_dim]
+
+        # 多头注意力 reshape
+        Q = Q.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        K = K.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        V = V.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # 计算注意力分数
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        # 应用注意力
+        attn_output = torch.matmul(attn_weights, V)
+        attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, -1, self.hidden_dim)
+
+        # 输出投影
+        attn_output = self.output_proj(attn_output.squeeze(1))
+        attn_output = self.dropout(attn_output)
+
+        # 残差连接和层归一化
+        attn_output = self.norm1(residual + attn_output)
+
+        # FFN
+        ffn_output = self.ffn(attn_output)
+        output = self.norm2(attn_output + ffn_output)
+
+        return output
 
 class Attention(nn.Module):
     """

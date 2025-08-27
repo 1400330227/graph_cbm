@@ -132,21 +132,21 @@ def main(args):
         last_epoch=-1
     )
 
+    best_acc = 0.
     if args.resume != "":
         checkpoint = torch.load(args.resume, map_location='cpu')
-        model.load_state_dict(checkpoint['model'])
+        model.load_state_dict(checkpoint['model'], strict=False)
         optimizer.load_state_dict(checkpoint['optimizer'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         args.start_epoch = checkpoint['epoch'] + 1
         if args.amp and "scaler" in checkpoint:
             scaler.load_state_dict(checkpoint["scaler"])
+        best_acc = checkpoint.get('best_acc', 0.)
         print("the training process from epoch{}...".format(args.start_epoch))
 
     train_loss = []
     learning_rate = []
     val_map = []
-
-    best_acc = 0.
     for epoch in range(args.start_epoch, args.epochs):
         mean_loss, lr = train_one_epoch(
             model,
@@ -158,6 +158,8 @@ def main(args):
             warmup=True,
             scaler=scaler,
             relation_weights=relation_weights,
+            sgg_weight=args.sgg_weight,
+            cls_weight=args.cls_weight,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
@@ -180,6 +182,7 @@ def main(args):
         test_acc = sum(sgg_info.values()) / len(sgg_info)
         if test_acc > best_acc:
             best_acc = test_acc
+            save_files['best_acc'] = test_acc
             torch.save(save_files, f"save_weights/relations/{args.backbone}-model-best.pth")
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
@@ -216,6 +219,8 @@ if __name__ == "__main__":
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
     parser.add_argument("--mode", default='predcls', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
                         help="Use torch.cuda.amp for mixed precision training")
+    parser.add_argument('--sgg_weight', default=1, type=int, help='sgg_weight')
+    parser.add_argument('--cls_weight', default=1, type=int, help='cls_weight')
     args = parser.parse_args()
     print(args)
     if not os.path.exists(args.output_dir):

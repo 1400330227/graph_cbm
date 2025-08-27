@@ -3,7 +3,7 @@ import numpy as np
 
 
 class CBMEvaluator:
-    def __init__(self, n_tasks=200):
+    def __init__(self, n_tasks=20):
         self.result_dict = {
             'accuracy': [],
             'precision': [],

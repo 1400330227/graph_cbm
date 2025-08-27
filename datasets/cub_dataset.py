@@ -62,6 +62,7 @@ class CubDataset(Dataset):
                 img_id = path_to_id_map[(folder_path + '/' + cf)]
                 img_path = (folder + '/' + cf)
                 classes_label = classes_label_to_id_map[folder]
+                classes_label = classes_label - 1
                 if self.is_train and is_train_test[img_id]:
                     self.data.append((img_id, img_path, classes_label))
                 else:
@@ -77,7 +78,7 @@ class CubDataset(Dataset):
         img_path = os.path.join(self.img_root, img_path)
         json_path = img_path.replace(".jpg", ".json")
         relationship_path = relationship_path.replace(".jpg", ".json")
-        image = Image.open(img_path)
+        image = Image.open(img_path).convert('RGB')
         with open(json_path) as f:
             json_data = json.load(f)
         boxes = []

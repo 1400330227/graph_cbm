@@ -15,7 +15,7 @@ from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, Gr
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-def create_model(num_classes, relation_classes, n_tasks=200):
+def create_model(num_classes, relation_classes, n_tasks):
     backbone_name = 'resnet50'
     detector_weights_path = ""
     weights_path = "save_weights/classification/classification-model-best.pth"

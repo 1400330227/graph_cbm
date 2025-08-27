@@ -6,6 +6,7 @@ from torchvision.ops import boxes as box_ops, MultiScaleRoIAlign
 
 from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.modeling.relation.mamba import MambaRelationEncoder
+from graph_cbm.modeling.relation.transformer import CrossAttentionFusion
 from graph_cbm.utils.boxes import box_union
 
 
@@ -103,6 +104,8 @@ class Predictor(nn.Module):
 
         self.complex_path_classifier = nn.Linear(self.representation_dim * 2, relation_classes)
         self.direct_path_classifier = nn.Linear(self.representation_dim, relation_classes)
+
+        self.cross_attention_fusion = CrossAttentionFusion(representation_dim, hidden_dim, 8, 0.1)
 
     def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals):
         device = obj_logits[0].device
@@ -354,16 +357,12 @@ class Predictor(nn.Module):
         return union_features
 
     def forward(self, features, proposals, targets, images, rel_weights=None):
-        if self.use_c2ymodel:
+        if self.training:
+            with torch.no_grad():
+                proposals, rel_labels, rel_pair_idxs, rel_binarys = self.select_training_samples(proposals, targets)
+        else:
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.select_test_pairs(proposals)
-        else:
-            if self.training:
-                with torch.no_grad():
-                    proposals, rel_labels, rel_pair_idxs, rel_binarys = self.select_training_samples(proposals, targets)
-            else:
-                rel_labels, rel_binarys = None, None
-                rel_pair_idxs = self.select_test_pairs(proposals)
 
         box_features = self.box_roi_pool(features, [t["boxes"] for t in proposals], images.image_sizes)
         union_features = self.union_feature_extractor(images, features, proposals, rel_pair_idxs)
@@ -416,8 +415,9 @@ class Predictor(nn.Module):
         global_context_expanded = global_context.repeat_interleave(num_rels_per_image, dim=0)
 
         # 6. 使用拼接 + 线性层的方式融合局部和全局语义信息
-        fused_semantic_rep = torch.cat([local_semantic_rep, global_context_expanded], dim=-1)
-        semantic_rep = F.relu(self.semantic_fusion_layer(fused_semantic_rep))  # 使用ReLU增加非线性
+        semantic_rep = self.cross_attention_fusion(local_semantic_rep, global_context_expanded)
+        # fused_semantic_rep = torch.cat([local_semantic_rep, global_context_expanded], dim=-1)
+        # semantic_rep = F.relu(self.semantic_fusion_layer(fused_semantic_rep))  # 使用ReLU增加非线性
 
         # 7. 提取并融合视觉联合特征
         visual_union_features = self.feature_extractor(union_features)
@@ -434,12 +434,12 @@ class Predictor(nn.Module):
 
         result = self.post_processor(obj_logits, rel_logits, rel_pair_idxs, proposals)
         losses = {}
-        rel_features = None
-        if self.use_c2ymodel:
-            rel_features = box_features
-            return rel_features, result, losses
-        else:
-            if self.training:
-                loss_relation = relation_loss(rel_labels, rel_logits, rel_weights)
-                losses = dict(loss_rel=loss_relation)
-            return rel_features, result, losses
+        rel_features = box_features
+        # if self.use_c2ymodel:
+        #     rel_features = box_features
+        #     return rel_features, result, losses
+        # else:
+        if self.training:
+            loss_relation = relation_loss(rel_labels, rel_logits, rel_weights)
+            losses = dict(loss_rel=loss_relation)
+        return rel_features, result, losses

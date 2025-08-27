@@ -23,7 +23,7 @@ class GraphCBM(nn.Module):
         losses = {}
         losses.update(loss_relation)
         if self.use_c2ymodel:
-            cbm_graphs, loss_task = self.c2y_model(rel_features, rel_graphs, targets)
+            cbm_graphs, loss_task = self.c2y_model(rel_features, rel_graphs, proposals, features, images, targets)
             losses.update(loss_task)
             result = cbm_graphs
         if self.training:
@@ -73,7 +73,7 @@ def build_Graph_CBM(
 
     model = GraphCBM(detector, predictor, c2y_model, use_c2ymodel)
     if weights_path != "":
-        weights_dict = torch.load(weights_path, map_location='cpu', weights_only=True)
+        weights_dict = torch.load(weights_path, map_location='cpu')
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
         model.load_state_dict(weights_dict, strict=False)
 

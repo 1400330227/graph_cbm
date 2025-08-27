@@ -28,17 +28,36 @@ def create_model(num_classes, relation_classes, n_tasks, args):
         weights_path=weights_path,
         use_c2ymodel=True,
     )
-    detector_params = model.detector.parameters()
-    predictor_params = model.predictor.parameters()
-    c2y_model_params = model.c2y_model.parameters()
+    # detector_params = model.detector.parameters()
+    # predictor_params = model.predictor.parameters()
+    # c2y_model_params = model.c2y_model.parameters()
+    #
+    # for param in detector_params:
+    #     param.requires_grad = False
+    #
+    # for param in predictor_params:
+    #     param.requires_grad = False
 
-    for param in detector_params:
-        param.requires_grad = False
+    for param in model.parameters():
+        param.requires_grad = True
+
+    if hasattr(model.detector.backbone, 'patch_embed'):
+        for param in model.detector.backbone.patch_embed.parameters():
+            param.requires_grad = False
+    backbone_params = model.detector.backbone.parameters()
+    backbone_param_ids = set(id(p) for p in backbone_params)
+    detector_other_params = filter(
+        lambda p: id(p) not in backbone_param_ids,
+        model.detector.parameters()
+    )
+    predictor_params = model.predictor.parameters()
+    scene_classifier_params = model.c2y_model.parameters()
 
     params = [
-        # {"params": detector_params, "lr": args.lr * 0.01},
-        {"params": predictor_params, "lr": args.lr * 0.01},
-        {"params": c2y_model_params, "lr": args.lr}
+        {"params": backbone_params, "lr": args.lr * 0.01},
+        {"params": detector_other_params, "lr": args.lr * 0.1},
+        {"params": predictor_params, "lr": args.lr * 0.1},
+        {"params": scene_classifier_params, "lr": args.lr}
     ]
 
     return model, params
@@ -131,22 +150,21 @@ def main(args):
         eta_min=1e-6,
         last_epoch=-1
     )
-
+    best_acc = 0.
     if args.resume != "":
         checkpoint = torch.load(args.resume, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        optimizer.load_state_dict(checkpoint['optimizer'], strict=False)
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         args.start_epoch = checkpoint['epoch'] + 1
         if args.amp and "scaler" in checkpoint:
             scaler.load_state_dict(checkpoint["scaler"])
+        best_acc = checkpoint.get('best_acc', 0.)
         print("the training process from epoch{}...".format(args.start_epoch))
 
     train_loss = []
     learning_rate = []
     val_map = []
-
-    best_acc = 0.
     for epoch in range(args.start_epoch, args.epochs):
         mean_loss, lr = train_one_epoch(
             model,
@@ -158,6 +176,8 @@ def main(args):
             warmup=True,
             scaler=scaler,
             relation_weights=class_weights,
+            sgg_weight=args.sgg_weight,
+            cls_weight=args.cls_weight,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
@@ -180,6 +200,7 @@ def main(args):
         test_acc = cbm_info['accuracy']
         if test_acc > best_acc:
             best_acc = test_acc
+            save_files['best_acc'] = test_acc
             torch.save(save_files, f"save_weights/classification/{args.backbone}-model-best.pth")
     if len(train_loss) != 0 and len(learning_rate) != 0:
         plot_loss_and_lr(train_loss, learning_rate)
@@ -216,6 +237,8 @@ if __name__ == "__main__":
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
     parser.add_argument("--mode", default='predcls', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
                         help="Use torch.cuda.amp for mixed precision training")
+    parser.add_argument('--sgg_weight', default=0.1, type=int, help='sgg_weight')
+    parser.add_argument('--cls_weight', default=1, type=int, help='cls_weight')
     args = parser.parse_args()
     print(args)
     if not os.path.exists(args.output_dir):
