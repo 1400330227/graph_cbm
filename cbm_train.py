@@ -28,36 +28,21 @@ def create_model(num_classes, relation_classes, n_tasks, args):
         weights_path=weights_path,
         use_c2ymodel=True,
     )
-    # detector_params = model.detector.parameters()
-    # predictor_params = model.predictor.parameters()
-    # c2y_model_params = model.c2y_model.parameters()
-    #
-    # for param in detector_params:
-    #     param.requires_grad = False
-    #
-    # for param in predictor_params:
-    #     param.requires_grad = False
+    detector_params = model.detector.parameters()
+    predictor_params = model.predictor.parameters()
+    c2y_model_params = model.c2y_model.parameters()
 
-    for param in model.parameters():
+    for param in detector_params:
+        param.requires_grad = False
+
+    for param in predictor_params:
+        param.requires_grad = False
+
+    for param in c2y_model_params:
         param.requires_grad = True
 
-    if hasattr(model.detector.backbone, 'patch_embed'):
-        for param in model.detector.backbone.patch_embed.parameters():
-            param.requires_grad = False
-    backbone_params = model.detector.backbone.parameters()
-    backbone_param_ids = set(id(p) for p in backbone_params)
-    detector_other_params = filter(
-        lambda p: id(p) not in backbone_param_ids,
-        model.detector.parameters()
-    )
-    predictor_params = model.predictor.parameters()
-    scene_classifier_params = model.c2y_model.parameters()
-
     params = [
-        {"params": backbone_params, "lr": args.lr * 0.01},
-        {"params": detector_other_params, "lr": args.lr * 0.1},
-        {"params": predictor_params, "lr": args.lr * 0.1},
-        {"params": scene_classifier_params, "lr": args.lr}
+        {"params": c2y_model_params, "lr": args.lr}
     ]
 
     return model, params
@@ -153,8 +138,8 @@ def main(args):
     best_acc = 0.
     if args.resume != "":
         checkpoint = torch.load(args.resume, map_location='cpu')
-        model.load_state_dict(checkpoint['model'])
-        optimizer.load_state_dict(checkpoint['optimizer'], strict=False)
+        model.load_state_dict(checkpoint['model'], strict=False)
+        optimizer.load_state_dict(checkpoint['optimizer'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
         args.start_epoch = checkpoint['epoch'] + 1
         if args.amp and "scaler" in checkpoint:

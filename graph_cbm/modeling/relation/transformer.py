@@ -82,6 +82,19 @@ class TransformerEdgeEncoder(nn.Module):
         return x
 
 
+class MultiLayerCrossAttentionFusion(nn.Module):
+    def __init__(self, representation_dim, hidden_dim, num_layers=2, num_heads=8, dropout=0.1):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            CrossAttentionFusion(representation_dim, hidden_dim, num_heads, dropout)
+            for _ in range(num_layers)
+        ])
+
+    def forward(self, local_features, global_features):
+        for layer in self.layers:
+            local_features = layer(local_features, global_features)
+        return local_features
+
 class CrossAttentionFusion(nn.Module):
     def __init__(self, representation_dim, hidden_dim, num_heads=8, dropout=0.1):
         super(CrossAttentionFusion, self).__init__()

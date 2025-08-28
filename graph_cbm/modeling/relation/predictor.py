@@ -6,11 +6,8 @@ from torchvision.ops import boxes as box_ops, MultiScaleRoIAlign
 
 from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.modeling.relation.mamba import MambaRelationEncoder
-from graph_cbm.modeling.relation.transformer import CrossAttentionFusion
+from graph_cbm.modeling.relation.transformer import CrossAttentionFusion, MultiLayerCrossAttentionFusion
 from graph_cbm.utils.boxes import box_union
-
-
-# from graph_cbm.modeling.relation.transformer import TransformerEncoder, TransformerEdgeEncoder
 
 
 def relation_loss(rel_labels, relation_logits, rel_weights=None):
@@ -18,11 +15,26 @@ def relation_loss(rel_labels, relation_logits, rel_weights=None):
     relation_logits = torch.concat(relation_logits, dim=0)
     rel_labels = torch.concat(rel_labels, dim=0)
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
+    return loss_relation
 
-    # object_labels = [proposal['gt_labels'] for proposal in proposals]
-    # object_labels = torch.concat(object_labels, dim=0)
-    # object_logits = torch.concat(object_logits, dim=0)
-    # loss_refine_obj = criterion_loss(object_logits, object_labels.long())
+
+def focal_loss(rel_labels, relation_logits, rel_weights=None, alpha=0.75, gamma=0.5, reduction='mean'):
+    relation_logits = torch.concat(relation_logits, dim=0)
+    rel_labels = torch.concat(rel_labels, dim=0)
+
+    with torch.no_grad():
+        preds = relation_logits.argmax(dim=1)
+        accuracy = (preds == rel_labels).float().mean()
+
+    ce_loss = F.cross_entropy(relation_logits, rel_labels.long(), reduction='none')
+    pt = torch.exp(-ce_loss)
+    pt = torch.clamp(pt, min=1e-7, max=1 - 1e-7)
+    loss_relation = alpha * (1 - pt) ** gamma * ce_loss
+    if reduction == 'mean':
+        loss_relation = loss_relation.mean()
+    elif reduction == 'sum':
+        loss_relation = loss_relation.sum()
+    print(f"Focal Loss: {loss_relation:.4f}, Accuracy: {accuracy:.4f}, CE Loss: {ce_loss.mean():.4f}")
     return loss_relation
 
 
@@ -105,9 +117,9 @@ class Predictor(nn.Module):
         self.complex_path_classifier = nn.Linear(self.representation_dim * 2, relation_classes)
         self.direct_path_classifier = nn.Linear(self.representation_dim, relation_classes)
 
-        self.cross_attention_fusion = CrossAttentionFusion(representation_dim, hidden_dim, 8, 0.1)
+        self.cross_attention_fusion = MultiLayerCrossAttentionFusion(representation_dim, hidden_dim, 2, 8, 0.1)
 
-    def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals):
+    def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals, rel_score_thresh=0.2):
         device = obj_logits[0].device
         result = []
         for i, (rel_logit, obj_logit, rel_pair_idx, box) in enumerate(
@@ -139,6 +151,7 @@ class Predictor(nn.Module):
 
             rel_pair_idx = rel_pair_idx[sorting_idx]
             rel_class_prob = rel_class_prob[sorting_idx]
+            rel_scores = rel_scores[sorting_idx]
             rel_labels = rel_class[sorting_idx]
 
             result.append({
@@ -149,6 +162,7 @@ class Predictor(nn.Module):
                 "rel_pair_idxs": rel_pair_idx,
                 "pred_rel_scores": rel_class_prob,
                 "pred_rel_labels": rel_labels,
+                "rel_scores": rel_scores
             })
         return result
 
@@ -434,12 +448,12 @@ class Predictor(nn.Module):
 
         result = self.post_processor(obj_logits, rel_logits, rel_pair_idxs, proposals)
         losses = {}
-        rel_features = box_features
-        # if self.use_c2ymodel:
-        #     rel_features = box_features
-        #     return rel_features, result, losses
-        # else:
-        if self.training:
-            loss_relation = relation_loss(rel_labels, rel_logits, rel_weights)
-            losses = dict(loss_rel=loss_relation)
-        return rel_features, result, losses
+        rel_features = None
+        if self.use_c2ymodel:
+            rel_features = box_features
+            return rel_features, result, losses
+        else:
+            if self.training:
+                loss_relation = relation_loss(rel_labels, rel_logits, rel_weights)
+                losses = dict(loss_rel=loss_relation)
+            return rel_features, result, losses

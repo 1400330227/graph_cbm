@@ -12,18 +12,13 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 
-from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
-from graph_cbm.modeling.detection.detector import FasterRCNN
+from graph_cbm.modeling.detection.detector import build_detector
 
 
-def create_detector_model(num_classes, load_pretrain_weights=False):
-    backbone = build_resnet50_backbone(pretrained=False)
-    model = FasterRCNN(backbone=backbone, num_classes=num_classes)
-    if load_pretrain_weights:
-        weight_path = "../save_weights/detector/resnet-fpn-model-best.pth"
-        weights_dict = torch.load(weight_path, map_location='cpu')
-        weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
-        model.load_state_dict(weights_dict)
+def create_model(num_classes):
+    backbone_name = 'swin_transformer'
+    weights_path = f"save_weights/detector/{backbone_name}-fpn-model-best.pth"
+    model = build_detector(backbone_name, num_classes, weights_path, is_train=False)
     return model
 
 
@@ -60,7 +55,7 @@ class CubDataset(Dataset):
 
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-model = create_detector_model(load_pretrain_weights=True, num_classes=25)
+model = create_model(num_classes=25)
 model = model.to(device)
 
 
@@ -214,13 +209,13 @@ def save_x_anylabeling_json(img, boxes, scores, labels, dataset, file_path):
 
 
 def show_img():
-    img = cv2.imread("../data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg")
+    img = cv2.imread("data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg")
     plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
     img = img_transform(img)
     boxes, scores, labels = inference(img, model)
 
-    with open("../data/CUB_200_2011/cub_attributes.json", "r") as f:
+    with open("data/CUB_200_2011/cub_attributes.json", "r") as f:
         json_data = json.load(f)
     #
     COCO_LABELS = []
@@ -232,7 +227,7 @@ def show_img():
 
 
 def save_json():
-    with open("../data/CUB_200_2011/cub_attributes.json", "r") as f:
+    with open("data/CUB_200_2011/cub_attributes.json", "r") as f:
         json_data = json.load(f)
     COCO_LABELS = []
     for i, key in enumerate(json_data.keys()):

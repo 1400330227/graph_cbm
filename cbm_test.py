@@ -15,10 +15,10 @@ from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, Gr
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
-def create_model(num_classes, relation_classes, n_tasks):
-    backbone_name = 'resnet50'
+def create_model(num_classes, relation_classes, n_tasks, args):
+    backbone_name = args.backbone
     detector_weights_path = ""
-    weights_path = "save_weights/classification/classification-model-best.pth"
+    weights_path = f"save_weights/classification/{args.backbone}-model-best.pth"
     model = build_Graph_CBM(
         backbone_name=backbone_name,
         num_classes=num_classes,
@@ -51,7 +51,7 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks)
+    model = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks, args)
     model.to(device)
 
     val_map = []
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         description=__doc__)
     parser.add_argument('--device', default='cuda:0', help='device')
     parser.add_argument('--data-path', default='data', help='dataset')
-    parser.add_argument('--backbone_name', default='resnet50', help='backbone_name')
+    parser.add_argument('--backbone', default='resnet50', help='backbone_name')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
     parser.add_argument('--n_tasks', default=200, type=int, help='num_classes')
     parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')

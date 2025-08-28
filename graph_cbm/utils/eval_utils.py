@@ -33,12 +33,12 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=50,
 
         with torch.amp.autocast(device_type='cuda', enabled=scaler is not None):
             loss_dict = model(images, targets, relation_weights)
-            if isinstance(model, GraphCBM):
-                loss_rel = loss_dict.get('loss_rel', 0)
-                loss_task = loss_dict.get('loss_task', 0)
-                losses = (loss_rel * sgg_weight) + (loss_task * cls_weight)
-            else:
-                losses = sum(loss for loss in loss_dict.values())
+            # if isinstance(model, GraphCBM):
+            #     loss_rel = loss_dict.get('loss_rel', 0)
+            #     loss_task = loss_dict.get('loss_task', 0)
+            #     losses = (loss_rel * sgg_weight) + (loss_task * cls_weight)
+            # else:
+            losses = sum(loss for loss in loss_dict.values())
 
         # reduce losses over all GPUs for logging purpose
         loss_dict_reduced = utils.reduce_dict(loss_dict)
