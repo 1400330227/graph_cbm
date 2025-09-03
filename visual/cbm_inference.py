@@ -16,7 +16,6 @@ def create_model(num_classes, relation_classes):
     predictor = Predictor(
         obj_classes=num_classes,
         relation_classes=relation_classes,
-        feature_extractor=detector.roi_heads.box_head,
     )
     model = GraphCBM(detector, predictor)
     return model
