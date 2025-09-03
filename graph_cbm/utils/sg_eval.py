@@ -12,8 +12,12 @@ class BasicSceneGraphEvaluator:
         self.result_dict = {}
         self.mode = mode
         self.result_dict[self.mode + '_recall'] = {20: [], 50: [], 100: []}
+        self.result_dict[self.mode + '_precision'] = {20: [], 50: [], 100: []}
+        self.result_dict[self.mode + '_mean_precision'] = {20: [], 50: [], 100: []}
         self.multiple_preds = multiple_preds
         self.recall_means = {}
+        self.precision_means = {}
+        self.mean_precision_means = {}
 
     @classmethod
     def all_modes(cls, **kwargs):
@@ -33,7 +37,19 @@ class BasicSceneGraphEvaluator:
         for k, v in self.result_dict[self.mode + '_recall'].items():
             mean = np.mean(v)
             self.recall_means[k] = mean
-            print(' Average Recall     (AR) @%i: %f' % (k, mean))
+            print(f' Average Recall     (AR) @{k:<3}: {mean:<10.3f}')
+        for k, v in self.result_dict[self.mode + '_precision'].items():
+            mean = np.mean(v)
+            self.precision_means[k] = mean
+            print(f' Average Precision  (AP) @{k:<3}: {mean:<10.3f}')
+        for k, v in self.result_dict[self.mode + '_mean_precision'].items():
+            v_filtered = [val for val in v if val is not None]
+            if not v_filtered:
+                mean = 0.0
+            else:
+                mean = np.mean(v_filtered)
+            self.mean_precision_means[k] = mean
+            print(f' Mean Precision     (mP) @{k:<3}: {mean:<10.3f}')
 
 
 def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, **kwargs):
@@ -63,11 +79,69 @@ def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, **kwargs):
         **kwargs,
     )
 
-    for k in result_dict[mode + '_recall']:
-        match = reduce(np.union1d, pred_to_gt[:k])
-        rec_i = float(len(match)) / float(gt_rels.shape[0])
-        result_dict[mode + '_recall'][k].append(rec_i)
+    calculate_mP_R_at_K(gt_rels.shape[0], pred_to_gt, result_dict, mode)
+    # for k in result_dict[mode + '_recall']:
+    #     match = reduce(np.union1d, pred_to_gt[:k])
+    #     rec_i = float(len(match)) / float(gt_rels.shape[0])
+    #     result_dict[mode + '_recall'][k].append(rec_i)
     return pred_to_gt, pred_5ples, rel_scores
+
+
+# 在您的 sg_eval.py 文件中
+
+def calculate_mP_R_at_K(num_gt_relations, pred_to_gt, result_dict, mode, k_values=(20, 50, 100)):
+    """
+    计算并更新 Recall@K, Precision@K, 和 Mean Precision@K。
+    """
+    # is_match 的长度是实际的总预测数
+    is_match = np.array([len(x) > 0 for x in pred_to_gt])
+    num_predictions = len(is_match)
+
+    # 遍历不同的 K 值
+    for k in k_values:
+
+        # --- 在这里进行关键修改 (1/1) ---
+        # 确定我们实际要处理的范围，取 k 和实际预测数的较小值
+        effective_k = min(k, num_predictions)
+
+        # 如果有效预测数为0，所有指标都为0
+        if effective_k == 0:
+            result_dict[mode + '_recall'][k].append(0.0)
+            result_dict[mode + '_precision'][k].append(0.0)
+            result_dict[mode + '_mean_precision'][k].append(None)  # 或者 0.0
+            continue  # 继续下一个 K 值的循环
+        # --- 修改结束 ---
+
+        # --- 计算 Recall@K ---
+        # 只取前 effective_k 个预测
+        pred_to_gt_k = pred_to_gt[:effective_k]
+        match = reduce(np.union1d, pred_to_gt_k) if pred_to_gt_k else []
+        rec_i = float(len(match)) / float(num_gt_relations)
+        result_dict[mode + '_recall'][k].append(rec_i)
+
+        # --- 计算 Precision@K ---
+        # 在前 k 个预测中，正确的预测有多少个
+        # 注意：这里我们仍然用 k 作为分母，因为 Precision@K 的定义就是“在前K个位置中”
+        num_correct_k = np.sum(is_match[:effective_k])
+        prec_i = float(num_correct_k) / float(k)
+        result_dict[mode + '_precision'][k].append(prec_i)
+
+        # --- 计算 Mean Precision@K ---
+        if num_correct_k == 0:
+            mean_prec_i = 0.0
+        else:
+            # 所有的计算现在都只在 effective_k 的范围内进行
+            is_match_k = is_match[:effective_k]
+            cumulative_correct = np.cumsum(is_match_k)
+            # 分母的长度也应该是 effective_k
+            instantaneous_precision = cumulative_correct / (np.arange(effective_k) + 1)
+            mean_prec_i = np.sum(instantaneous_precision * is_match_k) / num_correct_k
+
+        # 对于没有预测的图像，它的mP是None
+        if num_predictions == 0:
+            result_dict[mode + '_mean_precision'][k].append(None)
+        else:
+            result_dict[mode + '_mean_precision'][k].append(mean_prec_i)
 
 
 def evaluate_recall(gt_rels, gt_boxes, gt_classes, pred_rels, pred_boxes, pred_classes, rel_scores=None,
