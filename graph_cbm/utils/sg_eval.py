@@ -37,11 +37,11 @@ class BasicSceneGraphEvaluator:
         for k, v in self.result_dict[self.mode + '_recall'].items():
             mean = np.mean(v)
             self.recall_means[k] = mean
-            print(f' Average Recall     (AR) @{k:<3}: {mean:<10.3f}')
+            print(f' Average Recall     (AR) @{k:<3} = {mean:<10.3f}')
         for k, v in self.result_dict[self.mode + '_precision'].items():
             mean = np.mean(v)
             self.precision_means[k] = mean
-            print(f' Average Precision  (AP) @{k:<3}: {mean:<10.3f}')
+            print(f' Average Precision  (AP) @{k:<3} = {mean:<10.3f}')
         for k, v in self.result_dict[self.mode + '_mean_precision'].items():
             v_filtered = [val for val in v if val is not None]
             if not v_filtered:
@@ -49,7 +49,7 @@ class BasicSceneGraphEvaluator:
             else:
                 mean = np.mean(v_filtered)
             self.mean_precision_means[k] = mean
-            print(f' Mean Precision     (mP) @{k:<3}: {mean:<10.3f}')
+            print(f' Mean Precision     (mP) @{k:<3} = {mean:<10.3f}')
 
 
 def evaluate_from_dict(gt_entry, pred_entry, mode, result_dict, **kwargs):
