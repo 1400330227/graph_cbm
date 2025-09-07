@@ -5,7 +5,7 @@ from torchvision.models.detection.rpn import RPNHead, RegionProposalNetwork
 from torchvision.ops import MultiScaleRoIAlign
 
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone, build_mobilenet_backbone, \
-    build_efficientnet_backbone, build_vgg_backbone, build_swin_transformer_backbone
+    build_efficientnet_backbone, build_vgg_backbone, build_swin_transformer_backbone, build_resnet101_backbone
 from graph_cbm.modeling.detection.generalized_rcnn import GeneralizedRCNN
 from graph_cbm.modeling.detection.roi_heads import RoIHeads
 from graph_cbm.modeling.detection.transform import GeneralizedRCNNTransform
@@ -111,6 +111,8 @@ class FasterRCNN(GeneralizedRCNN):
 def build_detector(backbone_name='', num_classes=91, weights_path="", is_train=True):
     if backbone_name == 'resnet50':
         backbone = build_resnet50_backbone(pretrained=False)
+    elif backbone_name == 'resnet101':
+        backbone = build_resnet101_backbone(pretrained=False)
     elif backbone_name == 'mobilenet':
         backbone = build_mobilenet_backbone(pretrained=False)
     elif backbone_name == 'efficientnet':

@@ -30,6 +30,7 @@ def build_resnet101_backbone(pretrained=False):
         return_layers=return_nodes,
         in_channels_list=in_channels_list,
         out_channels=256,
+        re_getter=False,
         extra_blocks=LastLevelMaxPool(),
     )
     return backbone

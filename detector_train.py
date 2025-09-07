@@ -19,7 +19,7 @@ def create_model(num_classes, args):
 
 
 def main(args):
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print("Using {} device training.".format(device.type))
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     data_transform = {
