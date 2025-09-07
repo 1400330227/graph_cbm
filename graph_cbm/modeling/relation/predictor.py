@@ -98,6 +98,11 @@ class Predictor(nn.Module):
 
         self.lin_obj = nn.Linear(representation_dim + embedding_dim + 128, hidden_dim)
         self.lin_edge = nn.Linear(embedding_dim + hidden_dim, hidden_dim)
+        self.lin_rel = nn.Sequential(
+            nn.Linear(hidden_dim * 2 + representation_dim, hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dim)
+        )
 
         self.bbox_embed = nn.Sequential(*[
             nn.Linear(9, 32), nn.ReLU(inplace=True), nn.Dropout(0.1),
@@ -107,20 +112,18 @@ class Predictor(nn.Module):
         self.obj_embed1 = nn.Embedding(self.obj_classes, embedding_dim)
         self.obj_embed2 = nn.Embedding(self.obj_classes, embedding_dim)
 
-        self.obj_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=False)
-        self.edge_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=True)
-
-        self.obj_classifier = nn.Linear(hidden_dim, obj_classes)
-        self.edge_classifier = nn.Linear(self.representation_dim, relation_classes)
+        self.local_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=False)
+        self.global_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=True)
+        self.relation_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=False)
 
         self.post_cat = nn.Linear(hidden_dim * 2, representation_dim)
         self.semantic_fusion_layer = nn.Linear(representation_dim + hidden_dim, representation_dim)
         self.relation_classifier = nn.Linear(self.representation_dim * 2, relation_classes)
 
-        self.complex_path_classifier = nn.Linear(self.representation_dim * 2, relation_classes)
-        self.direct_path_classifier = nn.Linear(self.representation_dim, relation_classes)
+        self.complex_path_classifier = nn.Linear(self.hidden_dim, relation_classes)
+        self.direct_path_classifier = nn.Linear(self.hidden_dim, relation_classes)
 
-        self.cross_attention_fusion = MultiLayerCrossAttentionFusion(representation_dim, hidden_dim, 2, 8, 0.1)
+        self.cross_attention_fusion = MultiLayerCrossAttentionFusion(hidden_dim, hidden_dim, 2, 8, 0.1)
 
     def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals, rel_score_thresh=0.2):
         device = obj_logits[0].device
@@ -386,10 +389,9 @@ class Predictor(nn.Module):
 
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
-        # edge_index_list = [edge_pairs.t().contiguous() for edge_pairs in rel_pair_idxs]
 
-        # box_features = features
         box_features = self.feature_extractor(box_features)
+        visual_union_features = self.feature_extractor(union_features)
 
         proposal_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
         proposal_logits = torch.concat([proposal["logits"] for proposal in proposals], dim=0)
@@ -401,20 +403,20 @@ class Predictor(nn.Module):
         obj_representation = self.lin_obj(obj_representation)
 
         # 1. 获取每个对象的精炼特征
-        obj_embedding = self.obj_encoder(obj_representation, num_objs)
+        local_context = self.local_encoder(obj_representation, num_objs)
 
         obj_preds = proposal_labels
         obj_logits = proposal_logits
         obj_embed2 = self.obj_embed2(obj_preds.long())
 
         # 2. 准备 edge_encoder 的输入，并获取全局上下文
-        features_for_edge_encoder = torch.concat((obj_embedding, obj_embed2), dim=-1)
+        features_for_edge_encoder = torch.concat((local_context, obj_embed2), dim=-1)
         features_for_edge_encoder = self.lin_edge(features_for_edge_encoder)
-        global_context = self.edge_encoder(features_for_edge_encoder, num_objs)
+        global_context = self.global_encoder(features_for_edge_encoder, num_objs)
 
         # 3. 提取每个关系对的局部特征（head & tail）
-        head_obj_reps = obj_embedding.split(num_objs, dim=0)
-        tail_obj_reps = obj_embedding.split(num_objs, dim=0)
+        head_obj_reps = local_context.split(num_objs, dim=0)
+        tail_obj_reps = local_context.split(num_objs, dim=0)
 
         pair_reps_list = []
         for pair_idx, head_rep, tail_rep in zip(rel_pair_idxs, head_obj_reps, tail_obj_reps):
@@ -423,27 +425,26 @@ class Predictor(nn.Module):
             pair_reps_list.append(torch.cat((head, tail), dim=-1))
 
         pair_rep = torch.cat(pair_reps_list, dim=0)  # Shape: (total_relations, hidden_dim * 2)
+        pair_rep_multi = torch.cat([pair_rep, visual_union_features], dim=-1)
+        relation_rep = self.lin_rel(pair_rep_multi)
+
+        enhanced_relation_rep = self.relation_encoder(relation_rep, num_rels)
 
         # 4. 投射局部特征
-        local_semantic_rep = self.post_cat(pair_rep)  # Shape: (total_relations, representation_dim)
+        # local_semantic_rep = self.post_cat(pair_rep)  # Shape: (total_relations, representation_dim)
 
         # 5. 扩展并投射全局上下文，使其与每个关系对应
         num_rels_per_image = torch.tensor(num_rels, device=global_context.device)
         global_context_expanded = global_context.repeat_interleave(num_rels_per_image, dim=0)
 
         # 6. 使用拼接 + 线性层的方式融合局部和全局语义信息
-        semantic_rep = self.cross_attention_fusion(local_semantic_rep, global_context_expanded)
-        # fused_semantic_rep = torch.cat([local_semantic_rep, global_context_expanded], dim=-1)
-        # semantic_rep = F.relu(self.semantic_fusion_layer(fused_semantic_rep))  # 使用ReLU增加非线性
-
-        # 7. 提取并融合视觉联合特征
-        visual_union_features = self.feature_extractor(union_features)
+        semantic_rep = self.cross_attention_fusion(enhanced_relation_rep, global_context_expanded)
 
         # 通过逐元素相乘融合语义和视觉信息
-        final_rep = torch.cat([semantic_rep, visual_union_features], dim=-1)
+        final_rep = semantic_rep
 
         # 8. 预测 rel_logits
-        rel_logits = self.complex_path_classifier(final_rep) + self.direct_path_classifier(local_semantic_rep)
+        rel_logits = self.complex_path_classifier(final_rep) + self.direct_path_classifier(enhanced_relation_rep)
 
         # 9. 后续处理和损失计算
         obj_logits = obj_logits.split(num_objs, dim=0)
