@@ -20,6 +20,20 @@ def build_resnet50_backbone(pretrained=False):
     )
     return backbone
 
+def build_resnet101_backbone(pretrained=False):
+    models = torchvision.models.resnet101(pretrained=pretrained)
+    return_nodes = {'layer1': '0', 'layer2': '1', 'layer3': '2', 'layer4': '3'}
+    in_channels_list = [256, 512, 1024, 2048]
+    backbone = create_feature_extractor(models, return_nodes=return_nodes)
+    backbone = BackboneWithFPN(
+        backbone=backbone,
+        return_layers=return_nodes,
+        in_channels_list=in_channels_list,
+        out_channels=256,
+        extra_blocks=LastLevelMaxPool(),
+    )
+    return backbone
+
 
 def build_mobilenet_backbone(pretrained=False):
     models = torchvision.models.mobilenet_v3_large(pretrained=pretrained)
@@ -117,7 +131,7 @@ def build_swin_transformer_backbone(pretrained=False):
 
 
 if __name__ == '__main__':
-    build_swin_transformer_backbone()
+    build_resnet101_backbone()
     # cfg = CfgNode({
     #     'pretrain_path': "checkpoints/backbone/resnet50.pth",
     #     'norm_layer': torch.nn.BatchNorm2d,

@@ -14,6 +14,9 @@ def relation_loss(rel_labels, relation_logits, rel_weights=None):
     criterion_loss = nn.CrossEntropyLoss(weight=rel_weights)
     relation_logits = torch.concat(relation_logits, dim=0)
     rel_labels = torch.concat(rel_labels, dim=0)
+    with torch.no_grad():
+        preds = relation_logits.argmax(dim=1)
+        accuracy = (preds == rel_labels).float().mean()
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
     return loss_relation
 
@@ -34,7 +37,7 @@ def focal_loss(rel_labels, relation_logits, rel_weights=None, alpha=0.75, gamma=
         loss_relation = loss_relation.mean()
     elif reduction == 'sum':
         loss_relation = loss_relation.sum()
-    print(f"Focal Loss: {loss_relation:.4f}, Accuracy: {accuracy:.4f}, CE Loss: {ce_loss.mean():.4f}")
+    # print(f"Focal Loss: {loss_relation:.4f}, Accuracy: {accuracy:.4f}, CE Loss: {ce_loss.mean():.4f}")
     return loss_relation
 
 
