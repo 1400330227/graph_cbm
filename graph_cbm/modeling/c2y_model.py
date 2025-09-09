@@ -24,7 +24,7 @@ class C2yModel(nn.Module):
         ])
         self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-    def forward(self, relation_features, relation_graphs, proposals, features, images, targets):
+    def forward(self, relation_graphs, proposals, features, images, targets):
         if 'pool' in features:
             x_cls = features['pool']
         else:
