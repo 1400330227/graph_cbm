@@ -6,7 +6,6 @@ from torchvision.ops import boxes as box_ops, MultiScaleRoIAlign
 
 from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.modeling.relation.mamba import MambaRelationEncoder
-from graph_cbm.modeling.relation.transformer import CrossAttentionFusion, MultiLayerCrossAttentionFusion
 from graph_cbm.utils.boxes import box_union
 
 
@@ -18,26 +17,6 @@ def relation_loss(rel_labels, relation_logits, rel_weights=None):
         preds = relation_logits.argmax(dim=1)
         accuracy = (preds == rel_labels).float().mean()
     loss_relation = criterion_loss(relation_logits, rel_labels.long())
-    return loss_relation
-
-
-def focal_loss(rel_labels, relation_logits, rel_weights=None, alpha=0.75, gamma=0.5, reduction='mean'):
-    relation_logits = torch.concat(relation_logits, dim=0)
-    rel_labels = torch.concat(rel_labels, dim=0)
-
-    with torch.no_grad():
-        preds = relation_logits.argmax(dim=1)
-        accuracy = (preds == rel_labels).float().mean()
-
-    ce_loss = F.cross_entropy(relation_logits, rel_labels.long(), reduction='none')
-    pt = torch.exp(-ce_loss)
-    pt = torch.clamp(pt, min=1e-7, max=1 - 1e-7)
-    loss_relation = alpha * (1 - pt) ** gamma * ce_loss
-    if reduction == 'mean':
-        loss_relation = loss_relation.mean()
-    elif reduction == 'sum':
-        loss_relation = loss_relation.sum()
-    # print(f"Focal Loss: {loss_relation:.4f}, Accuracy: {accuracy:.4f}, CE Loss: {ce_loss.mean():.4f}")
     return loss_relation
 
 
@@ -97,33 +76,25 @@ class Predictor(nn.Module):
         ])
 
         self.lin_obj = nn.Linear(representation_dim + embedding_dim + 128, hidden_dim)
-        self.lin_edge = nn.Linear(embedding_dim + hidden_dim, hidden_dim)
-        self.lin_rel = nn.Sequential(
-            nn.Linear(hidden_dim * 2 + representation_dim, hidden_dim),
-            nn.ReLU(),
-            nn.LayerNorm(hidden_dim)
-        )
-
         self.bbox_embed = nn.Sequential(*[
             nn.Linear(9, 32), nn.ReLU(inplace=True), nn.Dropout(0.1),
             nn.Linear(32, 128), nn.ReLU(inplace=True), nn.Dropout(0.1),
         ])
 
         self.obj_embed1 = nn.Embedding(self.obj_classes, embedding_dim)
-        self.obj_embed2 = nn.Embedding(self.obj_classes, embedding_dim)
 
         self.local_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=False)
-        self.global_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=True)
-        self.relation_encoder = MambaRelationEncoder(embed_dim=hidden_dim, depth=4, if_cls_token=False)
 
-        self.post_cat = nn.Linear(hidden_dim * 2, representation_dim)
-        self.semantic_fusion_layer = nn.Linear(representation_dim + hidden_dim, representation_dim)
-        self.relation_classifier = nn.Linear(self.representation_dim * 2, relation_classes)
-
-        self.complex_path_classifier = nn.Linear(self.hidden_dim, relation_classes)
-        self.direct_path_classifier = nn.Linear(self.hidden_dim, relation_classes)
-
-        self.cross_attention_fusion = MultiLayerCrossAttentionFusion(hidden_dim, hidden_dim, 2, 8, 0.1)
+        self.relation_classifier = nn.Sequential(
+            nn.Linear(hidden_dim * 2 + representation_dim, representation_dim),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(representation_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, relation_classes)
+        )
 
     def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals, rel_score_thresh=0.2):
         device = obj_logits[0].device
@@ -390,74 +361,37 @@ class Predictor(nn.Module):
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [boxes_in_image["boxes"].shape[0] for boxes_in_image in proposals]
 
+        # --- 1. 基础特征提取 ---
         box_features = self.feature_extractor(box_features)
         visual_union_features = self.feature_extractor(union_features)
-
         proposal_labels = torch.concat([proposal["labels"] for proposal in proposals], dim=0)
-        proposal_logits = torch.concat([proposal["logits"] for proposal in proposals], dim=0)
+        obj_logits = torch.concat([proposal["logits"] for proposal in proposals], dim=0)
 
+        # --- 2. 初始对象编码 (Mamba) ---
         obj_embed1 = self.obj_embed1(proposal_labels)
         pos_embed = self.bbox_embed(self.encode_box_info(proposals))
-
         obj_representation = torch.concat((box_features, obj_embed1, pos_embed), -1)
         obj_representation = self.lin_obj(obj_representation)
-
-        # 1. 获取每个对象的精炼特征
         local_context = self.local_encoder(obj_representation, num_objs)
 
-        obj_preds = proposal_labels
-        obj_logits = proposal_logits
-        obj_embed2 = self.obj_embed2(obj_preds.long())
-
-        # 2. 准备 edge_encoder 的输入，并获取全局上下文
-        features_for_edge_encoder = torch.concat((local_context, obj_embed2), dim=-1)
-        features_for_edge_encoder = self.lin_edge(features_for_edge_encoder)
-        global_context = self.global_encoder(features_for_edge_encoder, num_objs)
-
-        # 3. 提取每个关系对的局部特征（head & tail）
-        head_obj_reps = local_context.split(num_objs, dim=0)
-        tail_obj_reps = local_context.split(num_objs, dim=0)
-
+        local_contexts = local_context.split(num_objs, dim=0)
         pair_reps_list = []
-        for pair_idx, head_rep, tail_rep in zip(rel_pair_idxs, head_obj_reps, tail_obj_reps):
-            head = head_rep[pair_idx[:, 0]]
-            tail = tail_rep[pair_idx[:, 1]]
+        for pair_idx, local_context in zip(rel_pair_idxs, local_contexts):
+            head = local_context[pair_idx[:, 0]]
+            tail = local_context[pair_idx[:, 1]]
             pair_reps_list.append(torch.cat((head, tail), dim=-1))
 
-        pair_rep = torch.cat(pair_reps_list, dim=0)  # Shape: (total_relations, hidden_dim * 2)
-        pair_rep_multi = torch.cat([pair_rep, visual_union_features], dim=-1)
-        relation_rep = self.lin_rel(pair_rep_multi)
+        pair_rep = torch.cat(pair_reps_list, dim=0)
+        pair_rep = torch.cat([pair_rep, visual_union_features], dim=-1)
+        rel_logits = self.relation_classifier(pair_rep)
 
-        enhanced_relation_rep = self.relation_encoder(relation_rep, num_rels)
-
-        # 4. 投射局部特征
-        # local_semantic_rep = self.post_cat(pair_rep)  # Shape: (total_relations, representation_dim)
-
-        # 5. 扩展并投射全局上下文，使其与每个关系对应
-        num_rels_per_image = torch.tensor(num_rels, device=global_context.device)
-        global_context_expanded = global_context.repeat_interleave(num_rels_per_image, dim=0)
-
-        # 6. 使用拼接 + 线性层的方式融合局部和全局语义信息
-        semantic_rep = self.cross_attention_fusion(enhanced_relation_rep, global_context_expanded)
-
-        # 通过逐元素相乘融合语义和视觉信息
-        final_rep = semantic_rep
-
-        # 8. 预测 rel_logits
-        rel_logits = self.complex_path_classifier(final_rep) + self.direct_path_classifier(enhanced_relation_rep)
-
-        # 9. 后续处理和损失计算
         obj_logits = obj_logits.split(num_objs, dim=0)
         rel_logits = rel_logits.split(num_rels, dim=0)
-
         result = self.post_processor(obj_logits, rel_logits, rel_pair_idxs, proposals)
+
         losses = {}
         rel_features = None
-        if self.use_c2ymodel:
-            rel_features = box_features
-            return rel_features, result, losses
-        else:
-            if self.training:
-                loss_relation = relation_loss(rel_labels, rel_logits, rel_weights)
-                losses = dict(loss_rel=loss_relation)
-            return rel_features, result, losses
+        if self.training:
+            loss_relation = relation_loss(rel_labels, rel_logits, rel_weights)
+            losses = dict(loss_rel=loss_relation)
+        return rel_features, result, losses
