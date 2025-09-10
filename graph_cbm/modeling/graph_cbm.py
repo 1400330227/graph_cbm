@@ -256,7 +256,7 @@ class GraphCBM(nn.Module):
                 rel_pair_idxs.append(torch.zeros((1, 2), dtype=torch.int64, device=device))
         return rel_pair_idxs
 
-    def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals, rel_score_thresh=0.2):
+    def post_processor(self, obj_logits, relation_logits, rel_pair_idxs, proposals):
         device = obj_logits[0].device
         result = []
         for i, (rel_logit, obj_logit, rel_pair_idx, box) in enumerate(
@@ -283,12 +283,25 @@ class GraphCBM(nn.Module):
             rel_class = rel_class + 1
 
             triple_scores = rel_scores * obj_scores0 * obj_scores1
-            _, sorting_idx = torch.sort(triple_scores.view(-1), dim=0, descending=True)
 
-            rel_pair_idx = rel_pair_idx[sorting_idx]
-            rel_class_prob = rel_class_prob[sorting_idx]
-            rel_scores = rel_scores[sorting_idx]
-            rel_labels = rel_class[sorting_idx]
+            valid_mask = rel_scores > self.rel_score_thresh
+            if valid_mask.any():
+                rel_pair_idx = rel_pair_idx[valid_mask]
+                rel_class_prob = rel_class_prob[valid_mask]
+                rel_scores = rel_scores[valid_mask]
+                rel_class = rel_class[valid_mask]
+                triple_scores = triple_scores[valid_mask]
+                _, sorting_idx = torch.sort(triple_scores.view(-1), dim=0, descending=True)
+
+                rel_pair_idx = rel_pair_idx[sorting_idx]
+                rel_class_prob = rel_class_prob[sorting_idx]
+                rel_scores = rel_scores[sorting_idx]
+                rel_labels = rel_class[sorting_idx]
+            else:
+                rel_pair_idx = torch.zeros((0, 2), dtype=torch.int64, device=device)
+                rel_class_prob = torch.zeros((0, rel_logit.shape[1]), dtype=torch.float32, device=device)
+                rel_scores = torch.zeros((0,), dtype=torch.float32, device=device)
+                rel_labels = torch.zeros((0,), dtype=torch.int64, device=device)
 
             result.append({
                 "boxes": bbox,
