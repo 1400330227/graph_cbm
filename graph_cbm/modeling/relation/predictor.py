@@ -157,4 +157,4 @@ class Predictor(nn.Module):
         if self.training:
             loss_relation = relation_loss(rel_labels, rel_logits)
             losses = dict(loss_rel=loss_relation)
-        return (rel_logits, obj_logits), losses
+        return rel_logits, obj_logits, losses

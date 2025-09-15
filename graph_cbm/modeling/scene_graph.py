@@ -2,7 +2,6 @@ import torch
 import numpy.random as npr
 import torch.nn.functional as F
 from torch import nn
-from graph_cbm.modeling.c2y_model import C2yModel
 from graph_cbm.modeling.detection.backbone import (
     build_vgg_backbone, build_resnet50_backbone, build_mobilenet_backbone, build_efficientnet_backbone,
     build_swin_transformer_backbone)
@@ -26,27 +25,24 @@ class FeatureExtractor(nn.Module):
         return x
 
 
-class GraphCBM(nn.Module):
+class SceneGraph(nn.Module):
     def __init__(
             self,
             detector: FasterRCNN,
             predictor: Predictor,
-            c2y_model: C2yModel,
             feature_extractor_dim,
             representation_dim=1024,
-            use_c2ymodel=False,
             in_channels=256,
             batch_size_per_image=50,
             positive_fraction=0.25,
             num_sample_per_gt_rel=4,
             fg_thres=0.5,
-            rel_score_thresh=0.
+            rel_score_thresh=0.,
+            use_cbm=False,
     ):
         super().__init__()
         self.detector = detector
         self.predictor = predictor
-        self.use_c2ymodel = use_c2ymodel
-        self.c2y_model = c2y_model
 
         self.feature_extractor = FeatureExtractor(feature_extractor_dim, representation_dim)
 
@@ -58,6 +54,7 @@ class GraphCBM(nn.Module):
         self.num_sample_per_gt_rel = num_sample_per_gt_rel
         self.fg_thres = fg_thres
         self.rel_score_thresh = rel_score_thresh
+        self.use_cbm = use_cbm
 
         self.rect_conv = nn.Sequential(*[
             nn.Conv2d(2, in_channels // 2, kernel_size=7, stride=2, padding=3, bias=True),
@@ -111,13 +108,6 @@ class GraphCBM(nn.Module):
         return union_features
 
     def motif_rel_fg_bg_sampling(self, device, tgt_rel_matrix, ious, is_match, rel_possibility):
-        """
-        prepare to sample fg relation triplet and bg relation triplet
-        tgt_rel_matrix: # [number_target, number_target]
-        ious:           # [number_target, num_proposal]
-        is_match:       # [number_target, num_proposal]
-        rel_possibility:# [num_proposal, num_proposal]
-        """
         tgt_pair_idxs = torch.nonzero(tgt_rel_matrix > 0)
         assert tgt_pair_idxs.shape[1] == 2
         tgt_head_idxs = tgt_pair_idxs[:, 0].contiguous().view(-1)
@@ -324,40 +314,37 @@ class GraphCBM(nn.Module):
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.select_test_pairs(proposals)
 
-        box_features = self.box_roi_pool(features, [t["boxes"] for t in proposals], images.image_sizes)
+        roi_features = self.box_roi_pool(features, [t["boxes"] for t in proposals], images.image_sizes)
         union_features = self.union_feature_extractor(images, features, proposals, rel_pair_idxs)
-        box_features = self.feature_extractor(box_features)
-        union_features = self.feature_extractor(union_features)
+        box_features = self.feature_extractor(roi_features)
+        overlap_features = self.feature_extractor(union_features)
 
-        (rel_logits, obj_logits), loss_relation, = self.predictor(
+        rel_logits, obj_logits, loss_relation, = self.predictor(
             box_features,
-            union_features,
+            overlap_features,
             proposals,
             rel_pair_idxs,
             rel_labels,
             rel_weights
         )
-        rel_graphs = self.post_processor(obj_logits, rel_logits, rel_pair_idxs, proposals)
-        result = rel_graphs
+        result = self.post_processor(obj_logits, rel_logits, rel_pair_idxs, proposals)
         losses = {}
+        if self.use_cbm:
+            return proposals, result, images
         losses.update(loss_relation)
-        if self.use_c2ymodel:
-            cbm_graphs, loss_task = self.c2y_model(rel_graphs, proposals, features, images, targets)
-            losses.update(loss_task)
-            result = cbm_graphs
         if self.training:
             return losses
         return result
 
 
-def build_Graph_CBM(
+def build_scene_graph(
         backbone_name,
-        num_classes,  # 目标检测的数量
-        relation_classes,  # 关系的数量
-        n_tasks,  # 分类的数量
+        num_classes,
+        relation_classes,
         detector_weights_path="",
         weights_path="",
-        use_c2ymodel=False
+        rel_score_thresh=0.,
+        use_cbm=False,
 ):
     if backbone_name == 'resnet50':
         backbone = build_resnet50_backbone(pretrained=False)
@@ -385,18 +372,15 @@ def build_Graph_CBM(
 
     representation_dim = detector.roi_heads.box_predictor.cls_score.in_features
     predictor = Predictor(num_classes, relation_classes, representation_dim)
-    c2y_model = None
-    if use_c2ymodel:
-        c2y_model = C2yModel(num_classes, relation_classes, n_tasks, representation_dim)
 
-    model = GraphCBM(
+    model = SceneGraph(
         detector,
         predictor,
-        c2y_model,
         feature_extractor_dim,
         representation_dim,
-        use_c2ymodel,
-        out_channels
+        out_channels,
+        rel_score_thresh=rel_score_thresh,
+        use_cbm=use_cbm,
     )
 
     if weights_path != "":

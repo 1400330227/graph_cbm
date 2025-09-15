@@ -8,7 +8,7 @@ from datasets.cub_dataset import CubDataset
 from datasets.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph_cbm import GraphCBM, build_Graph_CBM
+from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
 from graph_cbm.utils.eval_utils import train_one_epoch, sg_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
@@ -18,15 +18,13 @@ def create_model(num_classes, relation_classes, n_tasks, args):
     backbone_name = args.backbone
     detector_weights_path = f"save_weights/detector/{args.backbone}-fpn-model-best.pth"
     weights_path = ""
-    use_c2ymodel = False
-    model = build_Graph_CBM(
+    model = build_scene_graph(
         backbone_name=backbone_name,
         num_classes=num_classes,
         relation_classes=relation_classes,
-        n_tasks=n_tasks,
         detector_weights_path=detector_weights_path,
         weights_path=weights_path,
-        use_c2ymodel=use_c2ymodel,
+        use_cbm=False,
     )
 
     detector_params = model.detector.parameters()
@@ -157,7 +155,7 @@ def main(args):
             print_freq=50,
             warmup=True,
             scaler=scaler,
-            relation_weights=relation_weights,
+            weights=relation_weights,
             sgg_weight=args.sgg_weight,
             cls_weight=args.cls_weight,
         )

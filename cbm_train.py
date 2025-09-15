@@ -1,51 +1,20 @@
 import os
 import datetime
 
-import numpy as np
 import torch
 from datasets import transforms
 from datasets.cub_dataset import CubDataset
-from datasets.voc_dataset import VOCDataSet
-from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
-from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph_cbm import GraphCBM, build_Graph_CBM
-from graph_cbm.modeling.relation.predictor import Predictor
-from graph_cbm.utils.eval_utils import train_one_epoch, evaluate, sg_evaluate, cbm_evaluate
+from graph_cbm.modeling.cbm import build_model
+from graph_cbm.utils.eval_utils import train_one_epoch, cbm_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 
 def create_model(num_classes, relation_classes, n_tasks, args):
-    backbone_name = args.backbone
-    detector_weights_path = ""
-    weights_path = f"save_weights/relations/{args.backbone}-model-best.pth"
-    model = build_Graph_CBM(
-        backbone_name=backbone_name,
-        num_classes=num_classes,
-        relation_classes=relation_classes,
-        n_tasks=n_tasks,
-        detector_weights_path=detector_weights_path,
-        weights_path=weights_path,
-        use_c2ymodel=True,
-    )
-    detector_params = model.detector.parameters()
-    predictor_params = model.predictor.parameters()
-    c2y_model_params = model.c2y_model.parameters()
-
-    for param in detector_params:
-        param.requires_grad = False
-
-    for param in predictor_params:
-        param.requires_grad = False
-
-    for param in c2y_model_params:
-        param.requires_grad = True
-
-    params = [
-        {"params": c2y_model_params, "lr": args.lr}
-    ]
-
-    return model, params
+    target_name = args.backbone
+    weights_path = ""
+    model = build_model(target_name, num_classes, relation_classes, n_tasks, weights_path)
+    return model
 
 
 def calculate_class_weights(dataset, num_classes, device):
@@ -108,7 +77,6 @@ def main(args):
             num_workers=nw,
             collate_fn=train_dataset.collate_fn
         )
-    # val_dataset = VOCDataSet(VOC_root, "2012", data_transform["val"], "val.txt")
     val_dataset = CubDataset("data/CUB_200_2011", data_transform["val"], False)
     val_data_set_loader = torch.utils.data.DataLoader(
         val_dataset,
@@ -118,9 +86,9 @@ def main(args):
         num_workers=nw,
         collate_fn=val_dataset.collate_fn
     )
-    model, params = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks, args)
+    model = create_model(args.num_classes + 1, args.relation_classes + 1, args.n_tasks, args)
     model.to(device)
-    # params = [p for p in model.parameters() if p.requires_grad]
+    params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(
         params,
         lr=args.lr,
@@ -160,20 +128,17 @@ def main(args):
             print_freq=50,
             warmup=True,
             scaler=scaler,
-            relation_weights=class_weights,
-            sgg_weight=args.sgg_weight,
-            cls_weight=args.cls_weight,
+            weights=class_weights,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
         lr_scheduler.step()
-        coco_info, sgg_info, cbm_info = cbm_evaluate(model, val_data_set_loader, device=device, mode=args.mode)
+        cbm_info = cbm_evaluate(model, val_data_set_loader, device=device)
         with open(results_file, "a") as f:
-            result_info = [f"{i:.4f}" for i in coco_info + [mean_loss.item()]] + [f"{lr:.6f}"]
+            result_info = [f"{value:.4f}" for value in cbm_info.values()] + [f"{mean_loss.item():.4f}"] + [f"{lr:.6f}"]
             txt = "epoch:{} {}".format(epoch, '  '.join(result_info))
             f.write(txt + "\n")
 
-        val_map.append(coco_info[1])  # pascal mAP
         save_files = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),
@@ -202,8 +167,8 @@ if __name__ == "__main__":
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
-    parser.add_argument('--n_tasks', default=200, type=int, help='n_tasks')
+    parser.add_argument('--relation-classes', default=18, type=int, help='relation_classes')
+    parser.add_argument('--n_tasks', default=20, type=int, help='n_tasks')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
@@ -220,10 +185,6 @@ if __name__ == "__main__":
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
-    parser.add_argument("--mode", default='predcls', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
-                        help="Use torch.cuda.amp for mixed precision training")
-    parser.add_argument('--sgg_weight', default=0.1, type=int, help='sgg_weight')
-    parser.add_argument('--cls_weight', default=1, type=int, help='cls_weight')
     args = parser.parse_args()
     print(args)
     if not os.path.exists(args.output_dir):

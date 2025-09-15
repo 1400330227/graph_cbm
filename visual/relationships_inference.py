@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 # 导入您项目中的相关模块
 # 请确保这些路径是正确的
-from graph_cbm.modeling.graph_cbm import build_Graph_CBM
+from graph_cbm.modeling.graph_cbm import build_graph_cbm
 
 CUB_CLASSES = [
     "background",
@@ -206,7 +206,7 @@ def main(args):
     num_rel_classes = len(CUB_RELATIONS)
     num_task_classes = 20
 
-    model = build_Graph_CBM(
+    model = build_graph_cbm(
         backbone_name=args.backbone,
         num_classes=num_obj_classes,
         relation_classes=num_rel_classes,

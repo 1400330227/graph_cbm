@@ -9,11 +9,9 @@ from .coco_utils import get_coco_api_from_dataset
 from .coco_eval import CocoEvaluator
 import graph_cbm.utils.distributed_utils as utils
 from .sg_eval import BasicSceneGraphEvaluator
-from ..modeling.graph_cbm import GraphCBM
 
 
-def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=50, warmup=False, scaler=None,
-                    relation_weights=None, sgg_weight=1, cls_weight=1):
+def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=50, warmup=False, scaler=None,weights=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -32,12 +30,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=50,
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         with torch.amp.autocast(device_type='cuda', enabled=scaler is not None):
-            loss_dict = model(images, targets, relation_weights)
-            # if isinstance(model, GraphCBM):
-            #     loss_rel = loss_dict.get('loss_rel', 0)
-            #     loss_task = loss_dict.get('loss_task', 0)
-            #     losses = (loss_rel * sgg_weight) + (loss_task * cls_weight)
-            # else:
+            loss_dict = model(images, targets, weights)
             losses = sum(loss for loss in loss_dict.values())
 
         # reduce losses over all GPUs for logging purpose
@@ -167,20 +160,13 @@ def sg_evaluate(model, data_loader, device, mode):
 
 
 @torch.no_grad()
-def cbm_evaluate(model, data_loader, device, mode):
+def cbm_evaluate(model, data_loader, device):
     cpu_device = torch.device("cpu")
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = "Test: "
 
-    coco = get_coco_api_from_dataset(data_loader.dataset)
-    iou_types = _get_iou_types(model)
-    coco_evaluator = CocoEvaluator(coco, iou_types)
-
-    sg_evaluator = BasicSceneGraphEvaluator.all_modes()
-
     cbm_evaluator = CBMEvaluator()
-
     for image, targets in metric_logger.log_every(data_loader, 100, header):
         image = list(img.to(device) for img in image)
 
@@ -193,32 +179,16 @@ def cbm_evaluate(model, data_loader, device, mode):
         outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
         model_time = time.time() - model_time
 
-        res = {target["image_id"].item(): output for target, output in zip(targets, outputs)}
-        cbm_val_batch(targets, outputs, sg_evaluator[mode], cbm_evaluator)
-
         evaluator_time = time.time()
-        coco_evaluator.update(res)
+        cbm_val_batch(targets, outputs, cbm_evaluator)
         evaluator_time = time.time() - evaluator_time
         metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
 
-    # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    coco_evaluator.synchronize_between_processes()
-
-    # accumulate predictions from all images
-    coco_evaluator.accumulate()
-    coco_evaluator.summarize()
-
-    coco_info = coco_evaluator.coco_eval[iou_types[0]].stats.tolist()  # numpy to list
-
-    sg_evaluator[mode].print_stats()
     cbm_evaluator.print_results()
-    sgg_info = sg_evaluator[mode].recall_means
-
     cbm_info = cbm_evaluator.result_means
-
-    return coco_info, sgg_info, cbm_info
+    return cbm_info
 
 
 def sg_val_batch(targets, outputs, evaluator):
@@ -242,25 +212,7 @@ def sg_val_batch(targets, outputs, evaluator):
         evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
 
 
-def cbm_val_batch(targets, outputs, sg_evaluator, cbm_evaluator):
-    for i, (target, output) in enumerate(zip(targets, outputs)):
-        gt_entry = {
-            'gt_classes': target["labels"].detach().cpu().numpy(),
-            'gt_relations': target["relation_tuple"].detach().cpu().numpy(),
-            'gt_boxes': target["boxes"].detach().cpu().numpy(),
-            'gt_image_id': target["image_id"].detach().cpu().numpy(),
-        }
-        pred_entry = {
-            # about objects
-            'pred_boxes': output["boxes"].detach().cpu().numpy(),
-            'pred_classes': output["labels"].detach().cpu().numpy(),
-            'obj_scores': output["scores"].detach().cpu().numpy(),
-            # about relations
-            'pred_rel_inds': output["rel_pair_idxs"].detach().cpu().numpy(),
-            'rel_scores': output["pred_rel_scores"].detach().cpu().numpy(),
-            'pred_rel_labels': output["pred_rel_labels"].detach().cpu().numpy(),
-        }
-        sg_evaluator.evaluate_scene_graph_entry(gt_entry, pred_entry)
+def cbm_val_batch(targets, outputs, cbm_evaluator):
     y_probs = torch.stack([output["y_logit"] for output in outputs], dim=0)
     y_true = torch.concat([target["class_label"] for target in targets], dim=0).cpu().detach().numpy()
     cbm_evaluator.compute_bin_accuracy(y_probs, y_true)

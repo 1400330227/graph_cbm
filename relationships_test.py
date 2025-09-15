@@ -3,7 +3,7 @@ import datetime
 import torch
 from datasets import transforms
 from datasets.cub_dataset import CubDataset
-from graph_cbm.modeling.graph_cbm import build_Graph_CBM
+from graph_cbm.modeling.scene_graph import build_scene_graph
 from graph_cbm.utils.eval_utils import sg_evaluate
 from graph_cbm.utils.plot_curve import plot_map
 
@@ -12,15 +12,12 @@ def create_model(num_classes, relation_classes, n_tasks, args):
     backbone_name = args.backbone
     detector_weights_path = ""
     weights_path = f"save_weights/relations/{args.backbone}-model-best.pth"
-    use_c2ymodel = False
-    model = build_Graph_CBM(
+    model = build_scene_graph(
         backbone_name=backbone_name,
         num_classes=num_classes,
         relation_classes=relation_classes,
-        n_tasks=n_tasks,
         detector_weights_path=detector_weights_path,
         weights_path=weights_path,
-        use_c2ymodel=use_c2ymodel,
     )
     return model
 
