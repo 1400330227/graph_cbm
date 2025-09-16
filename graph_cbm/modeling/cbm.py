@@ -3,10 +3,14 @@ import torch.nn.functional as F
 
 from torch import nn
 from torch.nn.utils.rnn import pad_packed_sequence, pad_sequence
+from torch_geometric.nn import RGCNConv
 from torchvision.ops import MultiScaleRoIAlign
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
+from graph_cbm.modeling.relation.gcn import RGCN
 from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
 from graph_cbm.modeling.target_model import get_target_model, get_resnet_imagenet_preprocess
+
+
 # from datasets import transforms
 
 
@@ -59,6 +63,9 @@ class CBMModel(nn.Module):
             graph: SceneGraph,
             transform: nn.Module,
             n_tasks,
+            relation_classes,
+            roi_pooling=MultiScaleRoIAlign(featmap_names=['0', '1', '2', '3', 'pool'], output_size=7, sampling_ratio=2),
+            out_channels=2048,
             representation_dim=256,
             kernel_size=(7, 7)
     ):
@@ -67,16 +74,18 @@ class CBMModel(nn.Module):
         self.graph = graph
         self.transform = transform
         self.n_tasks = n_tasks
+        self.num_relations = relation_classes
+        self.out_channels = out_channels
         self.representation_dim = representation_dim
-
-        self.roi_align = MultiScaleRoIAlign(featmap_names=['0', '1', '2', '3', 'pool'], output_size=7, sampling_ratio=2)
+        self.roi_align = roi_pooling
 
         self.attention_layer = nn.Sequential(
-            nn.Linear(representation_dim, 256),
+            nn.Linear(representation_dim, representation_dim),
             nn.Tanh(),
-            nn.Linear(256, 1)
+            nn.Linear(representation_dim, 1)
         )
-        self.proj_layer = nn.Conv2d(256, representation_dim, 1)
+        self.proj_layer = nn.Conv2d(out_channels, representation_dim, 1)
+        self.rgcn = RGCN(representation_dim, self.num_relations)
         self.pool_layer = SoftmaxPooling2D(kernel_size=kernel_size)
         self.classifier = nn.Sequential(nn.Linear(representation_dim, n_tasks))
 
@@ -92,7 +101,6 @@ class CBMModel(nn.Module):
         images_tensor = torch.stack(images_list, dim=0)
         return images_tensor, targets_list
 
-
     def forward(self, images, targets=None, weights=None):
         with torch.no_grad():
             proposals, rel_graphs = self.graph(images, targets)
@@ -103,16 +111,16 @@ class CBMModel(nn.Module):
         x = self.target_model(x)
         x = self.roi_align(x, boxes, image_sizes)
         x = self.proj_layer(x)
+        edge_index_list = [rel['rel_pair_idxs'].t() for rel in rel_graphs]
+        edge_type_list = [rel['pred_rel_labels'] for rel in rel_graphs]
+
+        x = torch.squeeze(self.pool_layer(x))
+        x = self.rgcn(x, edge_index_list, edge_type_list, num_nodes_list=num_objs)
 
         obj_features_list = x.split(num_objs, dim=0)
         scene_features_list = []
         attn_weights_list = []
         for features_in_image in obj_features_list:
-            if features_in_image.numel() == 0:
-                z = torch.zeros(1, self.representation_dim, device=features_in_image.device)
-                scene_features_list.append(z)
-                continue
-            features_in_image = torch.squeeze(self.pool_layer(features_in_image))
             attn_logits = self.attention_layer(features_in_image)
             attn_weights = F.softmax(attn_logits, dim=0)
             scene_feature = torch.mm(attn_weights.t(), features_in_image)
@@ -127,14 +135,15 @@ class CBMModel(nn.Module):
             loss_task = task_loss(y_logits, y, self.n_tasks)
             loss['loss_task'] = loss_task
             return loss
-        result = self.post_processor(y_logits, rel_graphs)
+        result = self.post_processor(y_logits, rel_graphs, attn_weights_list)
         return result
 
-    def post_processor(self, y_logits, relation_graphs):
+    def post_processor(self, y_logits, relation_graphs, attn_weights_list):
         result = []
         for i, graph in enumerate(relation_graphs):
             graph["y_logit"] = y_logits[i]
             graph["y_prob"] = F.softmax(y_logits[i], dim=-1)
+            graph["object_attention_weights"] = attn_weights_list[i]
             result.append(graph)
         return result
 
@@ -154,13 +163,13 @@ def build_model(
         relation_classes=relation_classes,
         detector_weights_path='',
         weights_path=scene_graph_weights_path,
-        rel_score_thresh=0.,
+        rel_score_thresh=0.2,
         use_cbm=True,
     )
-    target_model = build_resnet50_backbone(target_name)
-    transform = get_resnet_imagenet_preprocess()
-
-    model = CBMModel(target_model, scene_graph, transform, n_tasks)
+    target_model, transform = get_target_model(target_name)
+    roi_pooling = MultiScaleRoIAlign(featmap_names=['0'], output_size=7, sampling_ratio=2)
+    representation_dim = target_model.out_channels
+    model = CBMModel(target_model, scene_graph, transform, n_tasks, relation_classes, roi_pooling, representation_dim)
     if weights_path != "":
         weights_dict = torch.load(weights_path, map_location='cpu')
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict

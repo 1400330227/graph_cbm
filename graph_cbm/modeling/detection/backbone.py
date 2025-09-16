@@ -132,7 +132,7 @@ def build_swin_transformer_backbone(pretrained=False):
 
 
 if __name__ == '__main__':
-    build_resnet101_backbone()
+    build_resnet50_backbone()
     # cfg = CfgNode({
     #     'pretrain_path': "checkpoints/backbone/resnet50.pth",
     #     'norm_layer': torch.nn.BatchNorm2d,

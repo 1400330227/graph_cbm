@@ -50,12 +50,12 @@ def main(args):
 
     val_map = []
     for epoch in range(args.start_epoch, args.epochs):
-        coco_info, sgg_info, cbm_info = cbm_evaluate(model, val_data_set_loader, device=device, mode=args.mode)
+        cbm_info = cbm_evaluate(model, val_data_set_loader, device=device)
         with open(results_file, "a") as f:
-            result_info = [f"{i:.4f}" for i in coco_info]
+            result_info = [f"{i:.4f}" for i in cbm_info.values()]
             txt = "epoch:{} {}".format(epoch, '  '.join(result_info))
             f.write(txt + "\n")
-        val_map.append(coco_info[1])  # pascal mAP
+        val_map.append(cbm_info['accuracy'])  # pascal mAP
     if len(val_map) != 0:
         plot_map(val_map)
 
@@ -69,8 +69,8 @@ if __name__ == "__main__":
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--backbone', default='resnet50', help='backbone_name')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--n_tasks', default=200, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=42, type=int, help='relation_classes')
+    parser.add_argument('--n_tasks', default=20, type=int, help='num_classes')
+    parser.add_argument('--relation-classes', default=18, type=int, help='relation_classes')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')

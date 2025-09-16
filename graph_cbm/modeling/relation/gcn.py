@@ -64,10 +64,8 @@ class RGCN(nn.Module):
         self.dropout = nn.Dropout(p=dropout_prob)
 
     def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list) -> torch.Tensor:
-        flat_node_features = unpad_sequence(node_features, num_nodes_list)
         if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
             return node_features
-
         assert len(edge_index_list) == len(edge_type_list)
 
         edge_index_batch = []
@@ -81,16 +79,12 @@ class RGCN(nn.Module):
         edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
         edge_type_batch = torch.cat(edge_type_batch, dim=0).contiguous()
 
-        x = flat_node_features
+        x = node_features
         for layer in self.layers:
             gcn_update = layer(x, edge_index_batch, edge_type_batch)
             x = x + self.dropout(self.activation(gcn_update))
 
-        refined_flat_features = x
-        refined_features_list = refined_flat_features.split(num_nodes_list, dim=0)
-        refined_batched_sequence = pad_sequence(refined_features_list, batch_first=True, padding_value=0.0)
-
-        return refined_batched_sequence
+        return x
 
 
 if __name__ == '__main__':
