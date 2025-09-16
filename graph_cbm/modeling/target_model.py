@@ -1,14 +1,16 @@
-from torchvision import models, transforms
+import torch
+from torch import Tensor, nn
+from torchvision import models
 from pytorchcv.model_provider import get_model as ptcv_get_model
+
+from datasets import transforms
 
 
 def get_resnet_imagenet_preprocess():
     target_mean = [0.485, 0.456, 0.406]
     target_std = [0.229, 0.224, 0.225]
     preprocess = transforms.Compose([
-        transforms.Resize(224),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
+        transforms.Resize(size=(224, 224)),
         transforms.Normalize(mean=target_mean, std=target_std)]
     )
     return preprocess

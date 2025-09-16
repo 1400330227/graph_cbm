@@ -330,7 +330,7 @@ class SceneGraph(nn.Module):
         result = self.post_processor(obj_logits, rel_logits, rel_pair_idxs, proposals)
         losses = {}
         if self.use_cbm:
-            return proposals, result, images
+            return proposals, result
         losses.update(loss_relation)
         if self.training:
             return losses

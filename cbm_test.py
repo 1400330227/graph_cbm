@@ -6,10 +6,7 @@ import torch
 from datasets import transforms
 from datasets.cub_dataset import CubDataset
 from datasets.voc_dataset import VOCDataSet
-from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
-from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph_cbm import GraphCBM, build_graph_cbm
-from graph_cbm.modeling.relation.predictor import Predictor
+from graph_cbm.modeling.cbm import build_model
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate, sg_evaluate, cbm_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
 from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
@@ -17,16 +14,13 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 
 def create_model(num_classes, relation_classes, n_tasks, args):
     backbone_name = args.backbone
-    detector_weights_path = ""
     weights_path = f"save_weights/classification/{args.backbone}-model-best.pth"
-    model = build_graph_cbm(
-        backbone_name=backbone_name,
+    model = build_model(
+        target_name=backbone_name,
         num_classes=num_classes,
         relation_classes=relation_classes,
         n_tasks=n_tasks,
-        detector_weights_path=detector_weights_path,
         weights_path=weights_path,
-        use_c2ymodel=True,
     )
     return model
 

@@ -5,9 +5,9 @@ from torch import nn
 from torch.nn.utils.rnn import pad_packed_sequence, pad_sequence
 from torchvision.ops import MultiScaleRoIAlign
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
-from graph_cbm.modeling.graph_cbm import GraphCBM, build_graph_cbm
+from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
 from graph_cbm.modeling.target_model import get_target_model, get_resnet_imagenet_preprocess
-from datasets import transforms
+# from datasets import transforms
 
 
 def task_loss(y_logits, y, n_tasks, task_class_weights=None):
@@ -56,10 +56,10 @@ class CBMModel(nn.Module):
     def __init__(
             self,
             target_model: nn.Module,
-            graph: GraphCBM,
+            graph: SceneGraph,
             transform: nn.Module,
             n_tasks,
-            representation_dim=1024,
+            representation_dim=256,
             kernel_size=(7, 7)
     ):
         super(CBMModel, self).__init__()
@@ -72,27 +72,31 @@ class CBMModel(nn.Module):
         self.roi_align = MultiScaleRoIAlign(featmap_names=['0', '1', '2', '3', 'pool'], output_size=7, sampling_ratio=2)
 
         self.attention_layer = nn.Sequential(
-            nn.Linear(1024, 256),
+            nn.Linear(representation_dim, 256),
             nn.Tanh(),
             nn.Linear(256, 1)
         )
         self.proj_layer = nn.Conv2d(256, representation_dim, 1)
         self.pool_layer = SoftmaxPooling2D(kernel_size=kernel_size)
-        self.classifier = nn.Sequential(nn.Linear(1024, n_tasks))
+        self.classifier = nn.Sequential(nn.Linear(representation_dim, n_tasks))
 
-    def preprocess(self, x, targets=None):
-        transform = transforms.Compose([
-            transforms.Resize(size=(500, 500)),
-            transforms.ToTensor(),
-            transforms.RandomHorizontalFlip(0.5),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-        return transform(x, targets)
+    def preprocess(self, images, targets):
+        images_list = []
+        targets_list = []
+        for i in range(len(images)):
+            image = images[i]
+            target = targets[i]
+            image, target = self.transform(image, target)
+            images_list.append(image)
+            targets_list.append(target)
+        images_tensor = torch.stack(images_list, dim=0)
+        return images_tensor, targets_list
+
 
     def forward(self, images, targets=None, weights=None):
         with torch.no_grad():
-            proposals, rel_graphs, images = self.graph(images, targets)
-        x = images.tensors
+            proposals, rel_graphs = self.graph(images, targets)
+        x, rel_graphs = self.preprocess(images, rel_graphs)
         image_sizes = [(x.shape[-2], x.shape[-1])] * x.shape[0]
         boxes = [rel['boxes'] for rel in rel_graphs]
         num_objs = [rel['boxes'].shape[0] for rel in rel_graphs]
@@ -144,7 +148,7 @@ def build_model(
 ):
     graph_backbone = 'resnet50'
     scene_graph_weights_path = f"save_weights/relations/{graph_backbone}-model-best.pth"
-    scene_graph = build_graph_cbm(
+    scene_graph = build_scene_graph(
         backbone_name=graph_backbone,
         num_classes=num_classes,
         relation_classes=relation_classes,
@@ -154,7 +158,6 @@ def build_model(
         use_cbm=True,
     )
     target_model = build_resnet50_backbone(target_name)
-
     transform = get_resnet_imagenet_preprocess()
 
     model = CBMModel(target_model, scene_graph, transform, n_tasks)
