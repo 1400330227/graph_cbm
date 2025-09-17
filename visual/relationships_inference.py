@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 
 # 导入您项目中的相关模块
 # 请确保这些路径是正确的
-from graph_cbm.modeling.graph_cbm import build_graph_cbm
+from graph_cbm.modeling.scene_graph import build_scene_graph
 
 CUB_CLASSES = [
     "background",
@@ -206,14 +206,12 @@ def main(args):
     num_rel_classes = len(CUB_RELATIONS)
     num_task_classes = 20
 
-    model = build_graph_cbm(
+    model = build_scene_graph(
         backbone_name=args.backbone,
         num_classes=num_obj_classes,
         relation_classes=num_rel_classes,
-        n_tasks=num_task_classes,
-        detector_weights_path="",  # 在推理时，detector的权重已经包含在SGG模型中了
+        detector_weights_path="",
         weights_path=args.model_path,
-        use_c2ymodel=False  # 如果您的模型不包含分类头，可以设为False
     )
     model.to(device)
     model.eval()

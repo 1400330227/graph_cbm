@@ -6,7 +6,8 @@ from torch.nn.utils.rnn import pad_packed_sequence, pad_sequence
 from torch_geometric.nn import RGCNConv
 from torchvision.ops import MultiScaleRoIAlign
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
-from graph_cbm.modeling.relation.gcn import RGCN
+from graph_cbm.modeling.detection.transform import resize_boxes
+from graph_cbm.modeling.relation.gcn import RGCN, RelationalGAT
 from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
 from graph_cbm.modeling.target_model import get_target_model, get_resnet_imagenet_preprocess
 
@@ -85,7 +86,7 @@ class CBMModel(nn.Module):
             nn.Linear(representation_dim, 1)
         )
         self.proj_layer = nn.Conv2d(out_channels, representation_dim, 1)
-        self.rgcn = RGCN(representation_dim, self.num_relations)
+        self.rgcn = RelationalGAT(representation_dim, self.num_relations)
         self.pool_layer = SoftmaxPooling2D(kernel_size=kernel_size)
         self.classifier = nn.Sequential(nn.Linear(representation_dim, n_tasks))
 
@@ -102,6 +103,7 @@ class CBMModel(nn.Module):
         return images_tensor, targets_list
 
     def forward(self, images, targets=None, weights=None):
+        original_image_sizes = [(image.shape[-2], image.shape[-1]) for image in images]
         with torch.no_grad():
             proposals, rel_graphs = self.graph(images, targets)
         x, rel_graphs = self.preprocess(images, rel_graphs)
@@ -135,15 +137,18 @@ class CBMModel(nn.Module):
             loss_task = task_loss(y_logits, y, self.n_tasks)
             loss['loss_task'] = loss_task
             return loss
-        result = self.post_processor(y_logits, rel_graphs, attn_weights_list)
+        result = self.post_processor(y_logits, rel_graphs, attn_weights_list, image_sizes, original_image_sizes)
         return result
 
-    def post_processor(self, y_logits, relation_graphs, attn_weights_list):
+    def post_processor(self, y_logits, relation_graphs, attn_weights_list, image_sizes, original_image_sizes):
         result = []
         for i, graph in enumerate(relation_graphs):
             graph["y_logit"] = y_logits[i]
             graph["y_prob"] = F.softmax(y_logits[i], dim=-1)
             graph["object_attention_weights"] = attn_weights_list[i]
+            boxes = graph["boxes"]
+            boxes = resize_boxes(boxes, image_sizes[i], original_image_sizes[i])
+            graph["boxes"] = boxes
             result.append(graph)
         return result
 

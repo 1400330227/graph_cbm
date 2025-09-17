@@ -4,12 +4,14 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pad_sequence
 
 try:
-    from torch_geometric.nn import GCNConv, RGCNConv
+    from torch_geometric.nn import GCNConv, RGCNConv, GATv2Conv
     from torch_geometric.utils import add_self_loops, remove_self_loops
 except ImportError:
     print("PyTorch Geometric not found. Please install it to use the GCN module.")
     GCNConv = None
+    RGCNConv = None
     add_self_loops = None
+    GATConv = None
 
 
 def unpad_sequence(x, num_objs):
@@ -52,6 +54,7 @@ class GCN(nn.Module):
         refined_batched_sequence = pad_sequence(refined_features_list, batch_first=True, padding_value=0.0)
         return refined_batched_sequence
 
+
 class RGCN(nn.Module):
     def __init__(self, node_feature_dim: int, num_relations: int, num_layers: int = 2, dropout_prob: float = 0.3):
         super(RGCN, self).__init__()
@@ -59,7 +62,7 @@ class RGCN(nn.Module):
             raise ImportError("RGCNConv could not be imported. Please ensure PyTorch Geometric is installed correctly.")
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
-            self.layers.append(RGCNConv(node_feature_dim, node_feature_dim, num_relations))
+            self.layers.append(GATConv(node_feature_dim, node_feature_dim, num_relations))
         self.activation = nn.ReLU()
         self.dropout = nn.Dropout(p=dropout_prob)
 
@@ -84,6 +87,77 @@ class RGCN(nn.Module):
             gcn_update = layer(x, edge_index_batch, edge_type_batch)
             x = x + self.dropout(self.activation(gcn_update))
 
+        return x
+
+
+class RelationalGAT(nn.Module):
+    def __init__(self, node_feature_dim: int, num_relations: int, num_layers: int = 2,
+                 dropout_prob: float = 0.3, heads: int = 4, relation_embedding_dim: int = 64):
+        super(RelationalGAT, self).__init__()
+        self.relation_embedding = nn.Embedding(num_relations, relation_embedding_dim)
+        self.layers = nn.ModuleList()
+        hidden_channels = node_feature_dim // heads
+        self.layers.append(
+            GATv2Conv(
+                in_channels=node_feature_dim,
+                out_channels=hidden_channels,
+                heads=heads,
+                concat=True,  # 输出维度将是 hidden_channels * heads
+                dropout=dropout_prob,
+                edge_dim=relation_embedding_dim
+            )
+        )
+
+        for _ in range(num_layers - 2):
+            self.layers.append(
+                GATv2Conv(
+                    in_channels=hidden_channels * heads,
+                    out_channels=hidden_channels,
+                    heads=heads,
+                    concat=True,
+                    dropout=dropout_prob,
+                    edge_dim=relation_embedding_dim
+                )
+            )
+
+        self.layers.append(
+            GATv2Conv(
+                in_channels=hidden_channels * heads,
+                out_channels=node_feature_dim,
+                heads=1,
+                concat=False,
+                dropout=dropout_prob,
+                edge_dim=relation_embedding_dim
+            )
+        )
+
+        self.activation = nn.ELU()
+        self.dropout = nn.Dropout(p=dropout_prob)
+
+    def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list) -> torch.Tensor:
+        if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
+            return node_features
+
+        edge_index_batch = []
+        edge_type_batch = []
+        offset = 0
+        for i, edge_index in enumerate(edge_index_list):
+            edge_index_batch.append(edge_index + offset)
+            edge_type_batch.append(edge_type_list[i])
+            offset += num_nodes_list[i]
+
+        edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
+        edge_type_batch = torch.cat(edge_type_batch, dim=0).contiguous()
+        edge_attr = self.relation_embedding(edge_type_batch)
+        x = node_features
+        for i, layer in enumerate(self.layers):
+            x_input = x
+            x = layer(x, edge_index_batch, edge_attr=edge_attr)
+            if i < len(self.layers) - 1:
+                x = self.activation(x)
+                x = self.dropout(x)
+            if x.shape == x_input.shape:
+                x = x + x_input
         return x
 
 
