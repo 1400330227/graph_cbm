@@ -134,7 +134,7 @@ class RelationalGAT(nn.Module):
         self.activation = nn.ELU()
         self.dropout = nn.Dropout(p=dropout_prob)
 
-    def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list) -> torch.Tensor:
+    def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list):
         if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
             return node_features
 
@@ -149,16 +149,27 @@ class RelationalGAT(nn.Module):
         edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
         edge_type_batch = torch.cat(edge_type_batch, dim=0).contiguous()
         edge_attr = self.relation_embedding(edge_type_batch)
+
         x = node_features
+        last_layer_attention_info = None
         for i, layer in enumerate(self.layers):
             x_input = x
-            x = layer(x, edge_index_batch, edge_attr=edge_attr)
+            x, full_attention_info = layer(x, edge_index_batch, edge_attr=edge_attr, return_attention_weights=True)
+            if i == len(self.layers) - 1:
+                last_layer_attention_info = full_attention_info
             if i < len(self.layers) - 1:
                 x = self.activation(x)
                 x = self.dropout(x)
             if x.shape == x_input.shape:
                 x = x + x_input
-        return x
+        if last_layer_attention_info is None or last_layer_attention_info[1] is None:
+            return x, (None, None)
+
+        edge_index_with_self_loops, attention_weights_full = last_layer_attention_info
+        is_not_self_loop = edge_index_with_self_loops[0] != edge_index_with_self_loops[1]
+        original_edges_attention = attention_weights_full[is_not_self_loop]
+
+        return x, (edge_index_batch, original_edges_attention)
 
 
 if __name__ == '__main__':

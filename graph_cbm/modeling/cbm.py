@@ -109,15 +109,19 @@ class CBMModel(nn.Module):
         x, rel_graphs = self.preprocess(images, rel_graphs)
         image_sizes = [(x.shape[-2], x.shape[-1])] * x.shape[0]
         boxes = [rel['boxes'] for rel in rel_graphs]
-        num_objs = [rel['boxes'].shape[0] for rel in rel_graphs]
+
         x = self.target_model(x)
         x = self.roi_align(x, boxes, image_sizes)
         x = self.proj_layer(x)
+        proj_maps = x
         edge_index_list = [rel['rel_pair_idxs'].t() for rel in rel_graphs]
         edge_type_list = [rel['pred_rel_labels'] for rel in rel_graphs]
 
+        num_rels = [e.shape[1] for e in edge_index_list]
+        num_objs = [rel['boxes'].shape[0] for rel in rel_graphs]
+
         x = torch.squeeze(self.pool_layer(x))
-        x = self.rgcn(x, edge_index_list, edge_type_list, num_nodes_list=num_objs)
+        x, gat_attention_info = self.rgcn(x, edge_index_list, edge_type_list, num_nodes_list=num_objs)
 
         obj_features_list = x.split(num_objs, dim=0)
         scene_features_list = []
@@ -125,6 +129,10 @@ class CBMModel(nn.Module):
         for features_in_image in obj_features_list:
             attn_logits = self.attention_layer(features_in_image)
             attn_weights = F.softmax(attn_logits, dim=0)
+            '''
+            加权求和。它将图中所有对象的特征向量，根据刚刚算出的注意力权重，融合成一个单一的向量 scene_feature。
+            这个向量就是代表整个图（整个场景）的最终表示。注意力权重高的对象，其特征在这个最终向量中的占比就更大。
+            '''
             scene_feature = torch.mm(attn_weights.t(), features_in_image)
             scene_features_list.append(scene_feature)
             attn_weights_list.append(attn_weights)
@@ -137,10 +145,18 @@ class CBMModel(nn.Module):
             loss_task = task_loss(y_logits, y, self.n_tasks)
             loss['loss_task'] = loss_task
             return loss
-        result = self.post_processor(y_logits, rel_graphs, attn_weights_list, image_sizes, original_image_sizes)
+        result = self.post_processor(y_logits, rel_graphs, attn_weights_list, gat_attention_info, image_sizes,
+                                     original_image_sizes, num_objs, num_rels, proj_maps)
         return result
 
-    def post_processor(self, y_logits, relation_graphs, attn_weights_list, image_sizes, original_image_sizes):
+    def post_processor(self, y_logits, relation_graphs, attn_weights_list, gat_attention_info, image_sizes,
+                       original_image_sizes, num_objs, num_rels, proj_maps):
+        if gat_attention_info is not None:
+            num_edges_per_graph = num_rels
+            per_graph_attn_weights = gat_attention_info[1].split(num_edges_per_graph, dim=0)
+        else:
+            per_graph_attn_weights = [None] * len(relation_graphs)
+        proj_maps = proj_maps.split(num_objs, dim=0)
         result = []
         for i, graph in enumerate(relation_graphs):
             graph["y_logit"] = y_logits[i]
@@ -149,6 +165,8 @@ class CBMModel(nn.Module):
             boxes = graph["boxes"]
             boxes = resize_boxes(boxes, image_sizes[i], original_image_sizes[i])
             graph["boxes"] = boxes
+            graph["gat_relation_attention"] = per_graph_attn_weights[i]
+            graph["proj_map"] = proj_maps[i]
             result.append(graph)
         return result
 
