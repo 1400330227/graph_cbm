@@ -384,7 +384,7 @@ def build_scene_graph(
     )
 
     if weights_path != "":
-        weights_dict = torch.load(weights_path, map_location='cpu')
+        weights_dict = torch.load(weights_path, map_location='cpu', weights_only=False)
         weights_dict = weights_dict['model'] if 'model' in weights_dict else weights_dict
         model.load_state_dict(weights_dict, strict=False)
 
