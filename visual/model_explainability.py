@@ -31,11 +31,11 @@ EDGE_LABELS = {
 }
 
 CLASS_LABELS = {
-    0: "background", 1: "Black_footed_Albatross", 2: "Laysan_Albatross", 3: "Sooty_Albatross", 4: "Groove_billed_Ani",
-    5: "Crested_Auklet", 6: "Least_Auklet", 7: "Parakeet_Auklet", 8: "Rhinoceros_Auklet",
-    9: "Brewer_Blackbird", 10: "Red_winged_Blackbird", 11: "Rusty_Blackbird", 12: "Yellow_headed_Blackbird",
-    13: "Bobolink", 14: "Indigo_Bunting", 15: "Lazuli_Bunting", 16: "Painted_Bunting",
-    17: "Cardinal", 18: "Spotted_Catbird", 19: "Gray_Catbird", 20: "Yellow_breasted_Chat"
+    0: "Black_footed_Albatross", 1: "Laysan_Albatross", 2: "Sooty_Albatross", 3: "Groove_billed_Ani",
+    4: "Crested_Auklet", 5: "Least_Auklet", 6: "Parakeet_Auklet", 7: "Rhinoceros_Auklet",
+    8: "Brewer_Blackbird", 9: "Red_winged_Blackbird", 10: "Rusty_Blackbird", 11: "Yellow_headed_Blackbird",
+    12: "Bobolink", 13: "Indigo_Bunting", 14: "Lazuli_Bunting", 15: "Painted_Bunting",
+    16: "Cardinal", 17: "Spotted_Catbird", 18: "Gray_Catbird", 19: "Yellow_breasted_Chat"
 }
 
 
@@ -216,8 +216,8 @@ def explain_with_draw_bbox(output_graphs, vis_image_rgb):
         print("请查看已保存的文件。")
 
 
-def explain_with_gat_attention(model, pil_image, node_labels_map, edge_labels_map, class_labels_map):
-    image_tensor = F.to_tensor(pil_image).to(device)
+def explain_with_gat_attention(model, pil_image:Image, node_labels_map, edge_labels_map, class_labels_map):
+    image_tensor = torch.tensor(pil_image).to(device)
     model.eval()
     with torch.no_grad():
         output_graphs = model([image_tensor])
@@ -346,6 +346,76 @@ def explain_with_object_attention(model: CBMModel, pil_image: Image, class_label
     plt.close(fig)
 
 
+def explain_attribution_heatmap(model: CBMModel, pil_image: Image, class_labels_map):
+    """
+    通过前向传播归因（非梯度），生成一个统一的、融合了所有重要性分数的场景热力图。
+    """
+    print("正在通过前向归因生成统一热力图...")
+
+    # --- 1. 获取模型输出 ---
+    # 关键：传入原始 PIL 图像，让模型自己处理预处理，确保数据正确
+    image_tensor = F.to_tensor(pil_image).to(device)
+    model.eval()
+    with torch.no_grad():
+        output_graphs = model([image_tensor])
+
+    output_graph = output_graphs[0]
+
+    # --- 2. 提取所有需要的基础数据 ---
+    pred_idx = output_graph['y_prob'].argmax().item()
+
+    # a. 空间特征图 (RoIAlign -> Proj Layer 的输出)
+    proj_maps = output_graph['proj_map'].detach()  # Shape: [N, C, H, W]
+
+    # b. 对象级注意力权重 (Attention Layer 的输出)
+    object_attention_weights = output_graph['object_attention_weights'].detach()  # Shape: [N, 1]
+
+    # d. 其他元数据
+    boxes = output_graph['boxes'].cpu().numpy()
+
+    spatial_heatmaps = torch.mean(proj_maps, dim=1)
+    spatial_heatmaps = nn.functional.relu(spatial_heatmaps)
+
+    # c. 对象加权: 将每个空间热力图乘以其对象的注意力权重
+    #    广播: [N, H, W] * [N, 1, 1] -> [N, H, W]
+    final_heatmaps = spatial_heatmaps * object_attention_weights.view(-1, 1, 1)
+
+    # --- 4. 投影到统一画布并可视化 ---
+    original_np_image = np.array(pil_image)
+    H, W, _ = original_np_image.shape
+    unified_heatmap = np.zeros((H, W), dtype=np.float32)
+
+    for box, heatmap_tensor in zip(boxes, final_heatmaps):
+        x1, y1, x2, y2 = map(int, box)
+        box_w, box_h = x2 - x1, y2 - y1
+
+        if box_w <= 0 or box_h <= 0: continue
+
+        heatmap = heatmap_tensor.cpu().numpy()
+        heatmap_resized = cv2.resize(heatmap, (box_w, box_h), interpolation=cv2.INTER_CUBIC)
+
+        # 使用 np.maximum 进行正确的融合
+        roi_on_canvas = unified_heatmap[y1:y2, x1:x2]
+        unified_heatmap[y1:y2, x1:x2] = np.maximum(roi_on_canvas, heatmap_resized)
+
+    if np.max(unified_heatmap) > 0:
+        unified_heatmap /= np.max(unified_heatmap)
+
+    unified_heatmap = cv2.GaussianBlur(unified_heatmap, (15, 15), 0)
+
+    # 可视化
+    fig, ax = plt.subplots(figsize=(15, 15))
+    ax.imshow(original_np_image)
+    ax.imshow(unified_heatmap, cmap='jet', alpha=0.5)
+    ax.axis('off')
+    ax.set_title(f"Prediction: {class_labels_map.get(pred_idx, 'Unknown')}", fontsize=20)
+
+    output_filename = "attribution_heatmap_explanation.jpg"
+    plt.savefig(output_filename, bbox_inches='tight', pad_inches=0, dpi=300)
+    print(f"前向归因热力图已保存到: {output_filename}")
+    plt.show()
+    plt.close(fig)
+
 def interpretable():
     model = create_model(25, 19, 20)
     model.eval()
@@ -357,9 +427,10 @@ def interpretable():
     except FileNotFoundError:
         print(f"错误: 找不到图像文件 '{image_path}'。请创建一个虚拟图像或提供正确路径。")
         pil_image = Image.fromarray(np.uint8(np.random.rand(224, 224, 3) * 255))
-    explain_with_heatmap(model, pil_image, CLASS_LABELS)
-    explain_with_object_attention(model, pil_image, CLASS_LABELS)
-    explain_with_gat_attention(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
+    # explain_with_heatmap(model, pil_image, CLASS_LABELS)
+    # explain_with_object_attention(model, pil_image, CLASS_LABELS)
+    # explain_with_gat_attention(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
+    explain_attribution_heatmap(model, pil_image, CLASS_LABELS)
 
 
 if __name__ == '__main__':

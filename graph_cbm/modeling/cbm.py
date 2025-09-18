@@ -146,11 +146,11 @@ class CBMModel(nn.Module):
             loss['loss_task'] = loss_task
             return loss
         result = self.post_processor(y_logits, rel_graphs, attn_weights_list, gat_attention_info, image_sizes,
-                                     original_image_sizes, num_objs, num_rels, proj_maps)
+                                     original_image_sizes, num_objs, num_rels, proj_maps, scene_features_list)
         return result
 
     def post_processor(self, y_logits, relation_graphs, attn_weights_list, gat_attention_info, image_sizes,
-                       original_image_sizes, num_objs, num_rels, proj_maps):
+                       original_image_sizes, num_objs, num_rels, proj_maps, scene_features_list):
         if gat_attention_info is not None:
             num_edges_per_graph = num_rels
             per_graph_attn_weights = gat_attention_info[1].split(num_edges_per_graph, dim=0)
@@ -167,6 +167,7 @@ class CBMModel(nn.Module):
             graph["boxes"] = boxes
             graph["gat_relation_attention"] = per_graph_attn_weights[i]
             graph["proj_map"] = proj_maps[i]
+            graph["scene_feature"] = scene_features_list[i]
             result.append(graph)
         return result
 
