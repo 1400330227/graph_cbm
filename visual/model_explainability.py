@@ -216,8 +216,8 @@ def explain_with_draw_bbox(output_graphs, vis_image_rgb):
         print("请查看已保存的文件。")
 
 
-def explain_with_gat_attention(model, pil_image:Image, node_labels_map, edge_labels_map, class_labels_map):
-    image_tensor = torch.tensor(pil_image).to(device)
+def explain_with_graph(model, pil_image: Image, node_labels_map, edge_labels_map, class_labels_map):
+    image_tensor = F.to_tensor(pil_image).to(device)
     model.eval()
     with torch.no_grad():
         output_graphs = model([image_tensor])
@@ -239,56 +239,7 @@ def explain_with_gat_attention(model, pil_image:Image, node_labels_map, edge_lab
     )
 
 
-def explain_with_heatmap(model: CBMModel, pil_image: Image, class_labels_map: dict):
-    try:
-        target_layer = get_last_conv_name(model)
-    except AttributeError:
-        return
-
-    grad_cam = GradCAM(model, target_layer)
-
-    image_tensor = F.to_tensor(pil_image).to(device)
-    heatmaps, output = grad_cam.generate_heatmap([image_tensor])
-
-    boxes = output[0]['boxes'].cpu().numpy()
-    object_attention_weights = output[0]['object_attention_weights'].detach().cpu().numpy()
-
-    original_np_image = np.array(pil_image)
-    H, W, _ = original_np_image.shape
-    unified_heatmap = np.zeros((H, W), dtype=np.float32)
-
-    for box, heatmap, attn_weight in zip(boxes, heatmaps, object_attention_weights):
-        x1, y1, x2, y2 = map(int, box)
-        box_w, box_h = x2 - x1, y2 - y1
-        heatmap_resized = cv2.resize(heatmap, (box_w, box_h), interpolation=cv2.INTER_CUBIC)
-        scaled_heatmap = heatmap_resized * attn_weight.item()
-        # scaled_heatmap = heatmap_resized
-        roi_on_canvas = unified_heatmap[y1:y2, x1:x2]
-        unified_heatmap[y1:y2, x1:x2] = np.maximum(roi_on_canvas, scaled_heatmap)
-
-    if np.max(unified_heatmap) > 0:
-        unified_heatmap /= np.max(unified_heatmap)
-
-    unified_heatmap = cv2.GaussianBlur(unified_heatmap, (15, 15), 0)
-
-    fig, ax = plt.subplots(figsize=(15, 15))
-
-    ax.imshow(original_np_image)
-    ax.imshow(unified_heatmap, cmap='jet', alpha=0.5)
-
-    ax.axis('off')
-
-    pred_idx = output[0]['y_prob'].argmax().item()
-    title = f"Prediction: {class_labels_map.get(pred_idx, 'Unknown')}"
-    ax.set_title(title, fontsize=20)
-
-    output_filename = "unified_heatmap_explanation.jpg"
-    plt.savefig(output_filename, bbox_inches='tight', pad_inches=0, dpi=300)
-    plt.show()
-    plt.close(fig)
-
-
-def explain_with_object_attention(model: CBMModel, pil_image: Image, class_labels_map: dict):
+def explain_with_object_detection(model: CBMModel, pil_image: Image, class_labels_map: dict):
     image_tensor = F.to_tensor(pil_image).to(device)
     model.eval()
     with torch.no_grad():
@@ -346,7 +297,7 @@ def explain_with_object_attention(model: CBMModel, pil_image: Image, class_label
     plt.close(fig)
 
 
-def explain_attribution_heatmap(model: CBMModel, pil_image: Image, class_labels_map):
+def explain_with_heatmap(model: CBMModel, pil_image: Image, class_labels_map):
     """
     通过前向传播归因（非梯度），生成一个统一的、融合了所有重要性分数的场景热力图。
     """
@@ -416,6 +367,7 @@ def explain_attribution_heatmap(model: CBMModel, pil_image: Image, class_labels_
     plt.show()
     plt.close(fig)
 
+
 def interpretable():
     model = create_model(25, 19, 20)
     model.eval()
@@ -427,10 +379,9 @@ def interpretable():
     except FileNotFoundError:
         print(f"错误: 找不到图像文件 '{image_path}'。请创建一个虚拟图像或提供正确路径。")
         pil_image = Image.fromarray(np.uint8(np.random.rand(224, 224, 3) * 255))
-    # explain_with_heatmap(model, pil_image, CLASS_LABELS)
-    # explain_with_object_attention(model, pil_image, CLASS_LABELS)
-    # explain_with_gat_attention(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
-    explain_attribution_heatmap(model, pil_image, CLASS_LABELS)
+    explain_with_object_detection(model, pil_image, CLASS_LABELS)
+    explain_with_graph(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
+    explain_with_heatmap(model, pil_image, CLASS_LABELS)
 
 
 if __name__ == '__main__':

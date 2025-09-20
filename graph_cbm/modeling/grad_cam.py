@@ -36,7 +36,7 @@ class GradCAM:
     def _get_grads_hook(self, module, grad_input, grad_output):
         self.gradients = grad_output[0]
 
-    def generate_heatmap(self, input_image_list: list, target_class_idx: int = None):
+    def generate_heatmaps(self, input_image_list: list, target_class_idx: int = None):
         self.model.zero_grad()
         output = self.model(input_image_list)  # CBMModel 需要一个 list 作为输入
 
