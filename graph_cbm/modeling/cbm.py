@@ -1,18 +1,13 @@
 import torch
 import torch.nn.functional as F
-
-from torch import nn
-from torch.nn.utils.rnn import pad_packed_sequence, pad_sequence
-from torch_geometric.nn import RGCNConv
+from typing import List, Optional
+from torch import nn, Tensor
 from torchvision.ops import MultiScaleRoIAlign
-from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.transform import resize_boxes
-from graph_cbm.modeling.relation.gcn import RGCN, RelationalGAT
+from graph_cbm.modeling.relation.gcn import RelationalGAT
 from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
-from graph_cbm.modeling.target_model import get_target_model, get_resnet_imagenet_preprocess
-
-
-# from datasets import transforms
+from graph_cbm.modeling.target_model import get_target_model
+from torch_scatter import scatter_add, scatter_softmax
 
 
 def task_loss(y_logits, y, n_tasks, task_class_weights=None):
@@ -65,7 +60,7 @@ class CBMModel(nn.Module):
             transform: nn.Module,
             n_tasks,
             relation_classes,
-            roi_pooling=MultiScaleRoIAlign(featmap_names=['0', '1', '2', '3', 'pool'], output_size=7, sampling_ratio=2),
+            roi_pooling=MultiScaleRoIAlign(featmap_names=['0'], output_size=7, sampling_ratio=2),
             out_channels=2048,
             representation_dim=256,
             kernel_size=(7, 7)
@@ -88,7 +83,7 @@ class CBMModel(nn.Module):
         self.proj_layer = nn.Conv2d(out_channels, representation_dim, 1)
         self.rgcn = RelationalGAT(representation_dim, self.num_relations)
         self.pool_layer = SoftmaxPooling2D(kernel_size=kernel_size)
-        self.classifier = nn.Sequential(nn.Linear(representation_dim, n_tasks))
+        self.classifier = nn.Linear(representation_dim, n_tasks)
 
     def preprocess(self, images, targets):
         images_list = []
@@ -102,10 +97,11 @@ class CBMModel(nn.Module):
         images_tensor = torch.stack(images_list, dim=0)
         return images_tensor, targets_list
 
-    def forward(self, images, targets=None, weights=None):
+    def forward(self, images: List[Tensor], targets: Optional[list[dict[str, Tensor]]] = None, weights=None):
         original_image_sizes = [(image.shape[-2], image.shape[-1]) for image in images]
         with torch.no_grad():
             proposals, rel_graphs = self.graph(images, targets)
+
         x, rel_graphs = self.preprocess(images, rel_graphs)
         image_sizes = [(x.shape[-2], x.shape[-1])] * x.shape[0]
         boxes = [rel['boxes'] for rel in rel_graphs]
@@ -113,50 +109,49 @@ class CBMModel(nn.Module):
         x = self.target_model(x)
         x = self.roi_align(x, boxes, image_sizes)
         x = self.proj_layer(x)
+
         proj_maps = x
+
         edge_index_list = [rel['rel_pair_idxs'].t() for rel in rel_graphs]
         edge_type_list = [rel['pred_rel_labels'] for rel in rel_graphs]
-
         num_rels = [e.shape[1] for e in edge_index_list]
         num_objs = [rel['boxes'].shape[0] for rel in rel_graphs]
 
         x = torch.squeeze(self.pool_layer(x))
-        x, gat_attention_info = self.rgcn(x, edge_index_list, edge_type_list, num_nodes_list=num_objs)
+        x_gnn, gat_attention_info = self.rgcn(x, edge_index_list, edge_type_list, num_objs)  # [N_total_objs,256]
 
-        obj_features_list = x.split(num_objs, dim=0)
-        scene_features_list = []
-        attn_weights_list = []
-        for features_in_image in obj_features_list:
-            attn_logits = self.attention_layer(features_in_image)
-            attn_weights = F.softmax(attn_logits, dim=0)
-            '''
-            加权求和。它将图中所有对象的特征向量，根据刚刚算出的注意力权重，融合成一个单一的向量 scene_feature。
-            这个向量就是代表整个图（整个场景）的最终表示。注意力权重高的对象，其特征在这个最终向量中的占比就更大。
-            '''
-            scene_feature = torch.mm(attn_weights.t(), features_in_image)
-            scene_features_list.append(scene_feature)
-            attn_weights_list.append(attn_weights)
+        batch_size = len(num_objs)
+        batch_idx = torch.repeat_interleave(
+            torch.arange(batch_size, device=x_gnn.device),
+            torch.tensor(num_objs, device=x_gnn.device)
+        )
+        attn_logits = self.attention_layer(x_gnn)  # [N_total_objs, 1]
+        attn_weights = scatter_softmax(attn_logits, batch_idx, dim=0)  # [N_total_objs, 1]
+        weighted_features = x_gnn * attn_weights  # [N_total_objs,256]
+        scene_features_batch = scatter_add(weighted_features, batch_idx, dim=0)  # [N_total_objs,256]->[N,256]
 
-        scene_features_batch = torch.cat(scene_features_list, dim=0)
-        y_logits = self.classifier(scene_features_batch)
+        y_logits = self.classifier(scene_features_batch)  # [N,20]
+
         loss = {}
         if self.training:
             y = torch.as_tensor([t['class_label'] for t in targets], dtype=torch.int64, device=y_logits.device)
             loss_task = task_loss(y_logits, y, self.n_tasks)
             loss['loss_task'] = loss_task
             return loss
-        result = self.post_processor(y_logits, rel_graphs, attn_weights_list, gat_attention_info, image_sizes,
-                                     original_image_sizes, num_objs, num_rels, proj_maps, scene_features_list)
+
+        result = self.post_processor(y_logits, rel_graphs, attn_weights, gat_attention_info, image_sizes,
+                                     original_image_sizes, num_objs, num_rels, proj_maps)
         return result
 
-    def post_processor(self, y_logits, relation_graphs, attn_weights_list, gat_attention_info, image_sizes,
-                       original_image_sizes, num_objs, num_rels, proj_maps, scene_features_list):
+    def post_processor(self, y_logits, relation_graphs, attn_weights, gat_attention_info, image_sizes,
+                       original_image_sizes, num_objs, num_rels, proj_maps):
         if gat_attention_info is not None:
             num_edges_per_graph = num_rels
             per_graph_attn_weights = gat_attention_info[1].split(num_edges_per_graph, dim=0)
         else:
             per_graph_attn_weights = [None] * len(relation_graphs)
         proj_maps = proj_maps.split(num_objs, dim=0)
+        attn_weights_list = attn_weights.split(num_objs, dim=0)
         result = []
         for i, graph in enumerate(relation_graphs):
             graph["y_logit"] = y_logits[i]
@@ -167,7 +162,6 @@ class CBMModel(nn.Module):
             graph["boxes"] = boxes
             graph["gat_relation_attention"] = per_graph_attn_weights[i]
             graph["proj_map"] = proj_maps[i]
-            graph["scene_feature"] = scene_features_list[i]
             result.append(graph)
         return result
 
