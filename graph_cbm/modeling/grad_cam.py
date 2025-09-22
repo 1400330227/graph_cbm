@@ -1,8 +1,5 @@
 import torch
 import torch.nn.functional as F
-import cv2
-import numpy as np
-from PIL import Image
 from torch import nn
 
 
@@ -61,8 +58,8 @@ class GradCAM:
 
         output_heatmaps = []
         for heatmap in heatmaps:
-            if torch.max(heatmap) > 0:
-                heatmap /= torch.max(heatmap)
+            # if torch.max(heatmap) > 0:
+            heatmap = (heatmap - torch.min(heatmap)) / (torch.max(heatmap) - torch.min(heatmap))
             output_heatmaps.append(heatmap.cpu().numpy())
 
         return output_heatmaps, output

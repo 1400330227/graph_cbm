@@ -77,7 +77,7 @@ class CBMModel(nn.Module):
 
         self.attention_layer = nn.Sequential(
             nn.Linear(representation_dim, representation_dim),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(representation_dim, 1)
         )
         self.proj_layer = nn.Conv2d(out_channels, representation_dim, 1)
@@ -181,7 +181,7 @@ def build_model(
         relation_classes=relation_classes,
         detector_weights_path='',
         weights_path=scene_graph_weights_path,
-        rel_score_thresh=0.2,
+        rel_score_thresh=0.3,
         use_cbm=True,
     )
     target_model, transform = get_target_model(target_name)
