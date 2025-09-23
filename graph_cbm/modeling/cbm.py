@@ -97,11 +97,49 @@ class CBMModel(nn.Module):
         images_tensor = torch.stack(images_list, dim=0)
         return images_tensor, targets_list
 
+    def filter_graphs_by_labels(self, rel_graphs: list, labels_to_filter: Optional[List[int]] = None) -> list:
+        if not labels_to_filter:
+            return rel_graphs
+        filtered_graphs = []
+        device = rel_graphs[0]['labels'].device
+        filter_tensor = torch.tensor(labels_to_filter, device=device)
+        for graph in rel_graphs:
+            new_graph = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in graph.items()}
+            isin_mask = torch.isin(new_graph['labels'], filter_tensor)
+            keep_mask = ~isin_mask
+            keep_indices = torch.where(keep_mask)[0]
+            if len(keep_indices) == 0:
+                for key in ['boxes', 'labels', 'scores', 'rel_pair_idxs', 'pred_rel_labels']:
+                    num = (0,) + new_graph[key].shape[1:]
+                    new_graph[key] = torch.empty(num, device=new_graph[key].device, dtype=new_graph[key].dtype)
+                filtered_graphs.append(new_graph)
+                continue
+            new_graph['boxes'] = new_graph['boxes'][keep_indices]
+            new_graph['labels'] = new_graph['labels'][keep_indices]
+            new_graph['scores'] = new_graph['scores'][keep_indices]
+            if 'rel_pair_idxs' in new_graph and new_graph['rel_pair_idxs'].numel() > 0:
+                rel_pairs = new_graph['rel_pair_idxs']
+                remap_indices = torch.full((graph['labels'].size(0),), -1,
+                                           dtype=torch.long, device=keep_indices.device)
+                remap_indices[keep_indices] = torch.arange(len(keep_indices), device=keep_indices.device)
+                source_nodes, target_nodes = rel_pairs[:, 0], rel_pairs[:, 1]
+                mask_source_keep = (remap_indices[source_nodes] != -1)
+                mask_target_keep = (remap_indices[target_nodes] != -1)
+                edge_keep_mask = mask_source_keep & mask_target_keep
+                filtered_rel_pairs = rel_pairs[edge_keep_mask]
+                new_graph['pred_rel_labels'] = new_graph['pred_rel_labels'][edge_keep_mask]
+                if filtered_rel_pairs.numel() > 0:
+                    new_graph['rel_pair_idxs'] = remap_indices[filtered_rel_pairs]
+                else:
+                    new_graph['rel_pair_idxs'] = torch.empty((0, 2), device=rel_pairs.device, dtype=rel_pairs.dtype)
+            filtered_graphs.append(new_graph)
+        return filtered_graphs
+
     def forward(self, images: List[Tensor], targets: Optional[list[dict[str, Tensor]]] = None, weights=None):
         original_image_sizes = [(image.shape[-2], image.shape[-1]) for image in images]
         with torch.no_grad():
-            proposals, rel_graphs = self.graph(images, targets)
-
+            rel_graphs, _ = self.graph(images, targets)
+        rel_graphs = self.filter_graphs_by_labels(rel_graphs, [24])
         x, rel_graphs = self.preprocess(images, rel_graphs)
         image_sizes = [(x.shape[-2], x.shape[-1])] * x.shape[0]
         boxes = [rel['boxes'] for rel in rel_graphs]
@@ -154,12 +192,12 @@ class CBMModel(nn.Module):
         attn_weights_list = attn_weights.split(num_objs, dim=0)
         result = []
         for i, graph in enumerate(relation_graphs):
-            graph["y_logit"] = y_logits[i]
-            graph["y_prob"] = F.softmax(y_logits[i], dim=-1)
-            graph["object_attention_weights"] = attn_weights_list[i]
             boxes = graph["boxes"]
             boxes = resize_boxes(boxes, image_sizes[i], original_image_sizes[i])
             graph["boxes"] = boxes
+            graph["y_logit"] = y_logits[i]
+            graph["y_prob"] = F.softmax(y_logits[i], dim=-1)
+            graph["object_attention_weights"] = attn_weights_list[i]
             graph["gat_relation_attention"] = per_graph_attn_weights[i]
             graph["proj_map"] = proj_maps[i]
             result.append(graph)

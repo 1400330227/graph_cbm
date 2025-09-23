@@ -160,62 +160,6 @@ def get_last_conv_name(net):
     return layer_name
 
 
-def explain_with_draw_bbox(output_graphs, vis_image_rgb):
-    output_graph = output_graphs[0]
-    attention_weights = output_graph['object_attention_weights'].cpu().numpy()
-    boxes = output_graph['boxes'].cpu().numpy()
-
-    fig, ax = plt.subplots(1, figsize=(10, 10))
-
-    # Display the base image
-    ax.imshow(vis_image_rgb)
-    ax.axis('off')  # Hide the axes ticks
-
-    # 5. Draw transparent rectangles on top of the image
-    if boxes.shape[0] > 0:
-        # Normalize weights to [0, 1] for alpha (transparency)
-        min_w, max_w = attention_weights.min(), attention_weights.max()
-        norm_weights = (attention_weights - min_w) / (max_w - min_w + 1e-6)
-
-        for i, box in enumerate(boxes):
-            x1, y1, x2, y2 = box
-            box_width = x2 - x1
-            box_height = y2 - y1
-
-            # Get the attention weight for this box
-            alpha = norm_weights[i][0]
-
-            # Create a Rectangle patch
-            rect = Rectangle(
-                (x1, y1),  # (x,y) bottom-left corner
-                box_width,  # Width
-                box_height,  # Height
-                facecolor='red',  # Fill color
-                alpha=alpha,  # Transparency based on attention
-                edgecolor='none'  # No border
-            )
-
-            # Add the patch to the axes
-            ax.add_patch(rect)
-    else:
-        print("模型没有检测到任何对象。")
-
-    ax.set_title("Attention Heatmap (Matplotlib)")
-
-    # 6. Save the plot to a file (This is the server-safe method)
-    output_filename = "attention_heatmap_matplotlib.png"
-    plt.savefig(output_filename, bbox_inches='tight', pad_inches=0)
-    print(f"解释性结果已成功保存到文件: {output_filename}")
-
-    # 7. Try to display the plot (This may fail on a server without a display)
-    try:
-        print("正在尝试显示图像窗口...")
-        plt.show()
-    except Exception as e:
-        print(f"\n无法显示图像窗口 (这是在服务器上的预期行为)。错误: {e}")
-        print("请查看已保存的文件。")
-
-
 def explain_with_graph(model, pil_image: Image, node_labels_map, edge_labels_map, class_labels_map):
     image_tensor = F.to_tensor(pil_image).to(device)
     model.eval()
@@ -298,89 +242,102 @@ def explain_with_object_detection(model: CBMModel, pil_image: Image, class_label
 
 
 def explain_with_heatmap(model: CBMModel, pil_image: Image, class_labels_map):
-    """
-    通过前向传播归因（非梯度），生成一个统一的、融合了所有重要性分数的场景热力图。
-    """
-    print("正在通过前向归因生成统一热力图...")
-
-    # --- 1. 获取模型输出 ---
-    # 关键：传入原始 PIL 图像，让模型自己处理预处理，确保数据正确
     image_tensor = F.to_tensor(pil_image).to(device)
     model.eval()
     with torch.no_grad():
         output_graphs = model([image_tensor])
-
     output_graph = output_graphs[0]
-
-    # --- 2. 提取所有需要的基础数据 ---
     pred_idx = output_graph['y_prob'].argmax().item()
-
-    # a. 空间特征图 (RoIAlign -> Proj Layer 的输出)
     proj_maps = output_graph['proj_map'].detach()  # Shape: [N, C, H, W]
-
-    # b. 对象级注意力权重 (Attention Layer 的输出)
     object_attention_weights = output_graph['object_attention_weights'].detach()  # Shape: [N, 1]
-
-    # d. 其他元数据
     boxes = output_graph['boxes'].cpu().numpy()
-
     spatial_heatmaps = torch.mean(proj_maps, dim=1)
-    spatial_heatmaps = nn.functional.relu(spatial_heatmaps)
-
-    # c. 对象加权: 将每个空间热力图乘以其对象的注意力权重
-    #    广播: [N, H, W] * [N, 1, 1] -> [N, H, W]
     final_heatmaps = spatial_heatmaps * object_attention_weights.view(-1, 1, 1)
-
-    # --- 4. 投影到统一画布并可视化 ---
     original_np_image = np.array(pil_image)
     H, W, _ = original_np_image.shape
     unified_heatmap = np.zeros((H, W), dtype=np.float32)
-
     for box, heatmap_tensor in zip(boxes, final_heatmaps):
         x1, y1, x2, y2 = map(int, box)
         box_w, box_h = x2 - x1, y2 - y1
-
         if box_w <= 0 or box_h <= 0: continue
-
         heatmap = heatmap_tensor.cpu().numpy()
-        heatmap_resized = cv2.resize(heatmap, (box_w, box_h), interpolation=cv2.INTER_CUBIC)
-
-        # 使用 np.maximum 进行正确的融合
-        roi_on_canvas = unified_heatmap[y1:y2, x1:x2]
-        unified_heatmap[y1:y2, x1:x2] = np.maximum(roi_on_canvas, heatmap_resized)
-
-    if np.max(unified_heatmap) > 0:
-        unified_heatmap /= np.max(unified_heatmap)
-
-    unified_heatmap = cv2.GaussianBlur(unified_heatmap, (15, 15), 0)
-
-    # 可视化
+        heatmap = (heatmap - np.mean(heatmap)) / np.std(heatmap)
+        heatmap = np.uint8(255 * heatmap)
+        heatmap = cv2.resize(heatmap, (box_w, box_h), interpolation=cv2.INTER_CUBIC)
+        unified_heatmap[y1:y2, x1:x2] = heatmap
+    unified_heatmap = cv2.GaussianBlur(unified_heatmap, (27, 27), 0)
     fig, ax = plt.subplots(figsize=(15, 15))
     ax.imshow(original_np_image)
     ax.imshow(unified_heatmap, cmap='jet', alpha=0.5)
     ax.axis('off')
     ax.set_title(f"Prediction: {class_labels_map.get(pred_idx, 'Unknown')}", fontsize=20)
-
-    output_filename = "attribution_heatmap_explanation.jpg"
-    plt.savefig(output_filename, bbox_inches='tight', pad_inches=0, dpi=300)
-    print(f"前向归因热力图已保存到: {output_filename}")
     plt.show()
     plt.close(fig)
+
+    print_all_triplets(output_graph, NODE_LABELS, EDGE_LABELS)
+
+
+def print_all_triplets(output_graph: torch.Tensor, node_labels_map: dict, edge_labels_map: dict):
+    edge_index = output_graph['rel_pair_idxs'].t().cpu().numpy()
+    relation_types = output_graph['pred_rel_labels'].cpu().numpy()
+    node_types = output_graph['labels'].cpu().numpy()
+    gat_attention_scores = output_graph["gat_relation_attention"].mean(dim=1).cpu().numpy()
+    object_attention_weights = output_graph["object_attention_weights"].mean(dim=1).cpu().numpy()
+
+    num_relations = len(relation_types)
+
+    if num_relations == 0:
+        return
+
+    influence_scores = []
+    for i in range(num_relations):
+        source_node_idx = edge_index[0, i]
+        target_node_idx = edge_index[1, i]
+
+        source_class_id = node_types[source_node_idx]
+        target_class_id = node_types[target_node_idx]
+        relation_class_id = relation_types[i]
+
+        source_name = node_labels_map.get(source_class_id)
+        target_name = node_labels_map.get(target_class_id)
+        relation_name = edge_labels_map.get(relation_class_id)
+
+        triplet_str = (
+            f"({source_name}) "
+            f"--- {relation_name} ---> "
+            f"({target_name})"
+        )
+        subject_attention = object_attention_weights[source_node_idx].item()
+        object_attention = object_attention_weights[target_node_idx].item()
+        score = gat_attention_scores[i] + subject_attention + object_attention
+
+        influence_scores.append({
+            "triplet": triplet_str,
+            "score": score,
+            "source": source_name,
+            "target": target_name,
+            "relation": relation_name,
+        })
+
+    influence_scores.sort(key=lambda x: x["score"], reverse=True)
+    for i, item in enumerate(influence_scores):
+        print(f"  {(i + 1):<2}: {item['triplet']:<40} Score: {item['score']:.4f}")
 
 
 def interpretable():
     model = create_model(25, 19, 20)
     model.eval()
     model.to(device)
-    # image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
-    image_path = 'data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg'
+    image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
+    # image_path = 'data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg'
+    # image_path = 'data/CUB_200_2011/images/003.Sooty_Albatross/Sooty_Albatross_0001_1071.jpg'
     try:
         pil_image = Image.open(image_path).convert('RGB')
     except FileNotFoundError:
         print(f"错误: 找不到图像文件 '{image_path}'。请创建一个虚拟图像或提供正确路径。")
         pil_image = Image.fromarray(np.uint8(np.random.rand(224, 224, 3) * 255))
-    explain_with_object_detection(model, pil_image, CLASS_LABELS)
-    explain_with_graph(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
+    # explain_with_object_detection(model, pil_image, CLASS_LABELS)
+    # explain_with_graph(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
     explain_with_heatmap(model, pil_image, CLASS_LABELS)
 
 
