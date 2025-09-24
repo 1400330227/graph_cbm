@@ -4,14 +4,14 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import torch
+import shap
+import pandas as pd
 from torch import Tensor, nn
 from torchvision import transforms
 from PIL import Image
 from graph_cbm.modeling.cbm import build_model, CBMModel
 from torchvision.transforms import functional as F
 from matplotlib.patches import Rectangle
-
-from graph_cbm.modeling.grad_cam import GradCAM
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -166,12 +166,9 @@ def explain_with_graph(model, pil_image: Image, node_labels_map, edge_labels_map
     with torch.no_grad():
         output_graphs = model([image_tensor])
     output_graph = output_graphs[0]
-    if "gat_relation_attention" not in output_graph:
-        print("未在模型输出中找到GAT注意力权重。请检查模型修改是否正确。")
-        return
-    gat_attention = output_graph['gat_relation_attention']
+    gat_attention = output_graph['relation_attention']
     edge_importance = gat_attention.mean(dim=1)
-    target_node_idx = np.argmax(output_graph['object_attention_weights'].cpu().numpy())
+    target_node_idx = np.argmax(output_graph['object_attention'].cpu().numpy())
     visualize_subgraph(
         output_graph,
         edge_importance,
@@ -183,14 +180,15 @@ def explain_with_graph(model, pil_image: Image, node_labels_map, edge_labels_map
     )
 
 
-def explain_with_object_detection(model: CBMModel, pil_image: Image, class_labels_map: dict):
+def explain_with_object_detection(model: CBMModel, pil_image: Image, node_labels_map, class_labels_map: dict):
     image_tensor = F.to_tensor(pil_image).to(device)
     model.eval()
     with torch.no_grad():
         output_graphs = model([image_tensor])
     output_graph = output_graphs[0]
     boxes = output_graph['boxes'].cpu().numpy()
-    attn_weights = output_graph['object_attention_weights'].cpu().numpy().flatten()
+    obj_labels = output_graph['labels'].cpu().numpy()
+    attn_weights = output_graph['object_attention'].cpu().numpy().flatten()
     if len(attn_weights) > 0:
         min_w, max_w = attn_weights.min(), attn_weights.max()
         norm_weights = (attn_weights - min_w) / (max_w - min_w + 1e-6)
@@ -206,6 +204,7 @@ def explain_with_object_detection(model: CBMModel, pil_image: Image, class_label
         box = boxes[i]
         norm_w = norm_weights[i]
         original_w = attn_weights[i]
+        label_id = obj_labels[i]
         x1, y1, x2, y2 = map(int, box)
         color = cmap(norm_w)
         linewidth = 1.0 + norm_w * 4.0  # 线宽范围: 1.0 -> 5.0
@@ -218,7 +217,9 @@ def explain_with_object_detection(model: CBMModel, pil_image: Image, class_label
             linewidth=linewidth
         )
         ax.add_patch(rect)
-        ax.text(x1, y1 - 5, f"{original_w:.2f}", color='white', fontsize=10, fontweight='bold',
+        label_name = node_labels_map.get(label_id)
+        display_text = f"{label_name}: {original_w:.2f}"
+        ax.text(x1, y1 - 5, display_text, color='white', fontsize=10, fontweight='bold',
                 bbox=dict(facecolor=color, alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2'))
     ax.axis('off')
     pred_idx = output_graph['y_prob'].argmax().item()
@@ -249,7 +250,7 @@ def explain_with_heatmap(model: CBMModel, pil_image: Image, class_labels_map):
     output_graph = output_graphs[0]
     pred_idx = output_graph['y_prob'].argmax().item()
     proj_maps = output_graph['proj_map'].detach()  # Shape: [N, C, H, W]
-    object_attention_weights = output_graph['object_attention_weights'].detach()  # Shape: [N, 1]
+    object_attention_weights = output_graph['object_attention'].detach()  # Shape: [N, 1]
     boxes = output_graph['boxes'].cpu().numpy()
     spatial_heatmaps = torch.mean(proj_maps, dim=1)
     final_heatmaps = spatial_heatmaps * object_attention_weights.view(-1, 1, 1)
@@ -265,7 +266,7 @@ def explain_with_heatmap(model: CBMModel, pil_image: Image, class_labels_map):
         heatmap = np.uint8(255 * heatmap)
         heatmap = cv2.resize(heatmap, (box_w, box_h), interpolation=cv2.INTER_CUBIC)
         unified_heatmap[y1:y2, x1:x2] = heatmap
-    unified_heatmap = cv2.GaussianBlur(unified_heatmap, (27, 27), 0)
+    unified_heatmap = cv2.GaussianBlur(unified_heatmap, (29, 29), 0)
     fig, ax = plt.subplots(figsize=(15, 15))
     ax.imshow(original_np_image)
     ax.imshow(unified_heatmap, cmap='jet', alpha=0.5)
@@ -274,71 +275,75 @@ def explain_with_heatmap(model: CBMModel, pil_image: Image, class_labels_map):
     plt.show()
     plt.close(fig)
 
-    print_all_triplets(output_graph, NODE_LABELS, EDGE_LABELS)
 
+def explain_with_waterfall(model: CBMModel, pil_image: Image,
+                           node_labels_map: dict, edge_labels_map: dict,
+                           class_labels_map: dict, top_k: int = 15):
+    shap.initjs()  # 初始化JS，以便在Jupyter等环境中显示
 
-def print_all_triplets(output_graph: torch.Tensor, node_labels_map: dict, edge_labels_map: dict):
+    # --- 1. 获取模型输出 ---
+    image_tensor = F.to_tensor(pil_image).to(device)
+    model.eval()
+    with torch.no_grad():
+        output_graph = model([image_tensor])[0]
+
+    pred_idx = output_graph['y_prob'].argmax().item()
+    pred_class_name = class_labels_map.get(pred_idx, f"Class_{pred_idx}")
+    contributions = output_graph['triplet_contributions'].cpu().numpy()
     edge_index = output_graph['rel_pair_idxs'].t().cpu().numpy()
-    relation_types = output_graph['pred_rel_labels'].cpu().numpy()
-    node_types = output_graph['labels'].cpu().numpy()
-    gat_attention_scores = output_graph["gat_relation_attention"].mean(dim=1).cpu().numpy()
-    object_attention_weights = output_graph["object_attention_weights"].mean(dim=1).cpu().numpy()
+    obj_labels = output_graph['labels'].cpu().numpy()
+    rel_labels = output_graph['pred_rel_labels'].cpu().numpy()
+    gat_attention = output_graph['relation_attention'].mean(dim=1).cpu().numpy()
 
-    num_relations = len(relation_types)
-
-    if num_relations == 0:
+    if len(contributions) == 0:
         return
 
-    influence_scores = []
-    for i in range(num_relations):
-        source_node_idx = edge_index[0, i]
-        target_node_idx = edge_index[1, i]
+    feature_names = [
+        f"{node_labels_map.get(obj_labels[s], 'Unk')}-[{edge_labels_map.get(r, 'Unk')}]-{node_labels_map.get(obj_labels[t], 'Unk')}"
+        for s, t, r in zip(edge_index[0], edge_index[1], rel_labels)
+    ]
 
-        source_class_id = node_types[source_node_idx]
-        target_class_id = node_types[target_node_idx]
-        relation_class_id = relation_types[i]
+    df = pd.DataFrame({
+        'feature_name': feature_names,
+        'contribution': contributions,
+        'gat_attention': gat_attention
+    })
 
-        source_name = node_labels_map.get(source_class_id)
-        target_name = node_labels_map.get(target_class_id)
-        relation_name = edge_labels_map.get(relation_class_id)
+    df_sorted = df[df['contribution'] > 0].sort_values(by="contribution", ascending=False).head(top_k)
+    df_display = df_sorted.iloc[::-1]
+    base_value = model.classifier.bias[pred_idx].item()
 
-        triplet_str = (
-            f"({source_name}) "
-            f"--- {relation_name} ---> "
-            f"({target_name})"
-        )
-        subject_attention = object_attention_weights[source_node_idx].item()
-        object_attention = object_attention_weights[target_node_idx].item()
-        score = gat_attention_scores[i] + subject_attention + object_attention
-
-        influence_scores.append({
-            "triplet": triplet_str,
-            "score": score,
-            "source": source_name,
-            "target": target_name,
-            "relation": relation_name,
-        })
-
-    influence_scores.sort(key=lambda x: x["score"], reverse=True)
-    for i, item in enumerate(influence_scores):
-        print(f"  {(i + 1):<2}: {item['triplet']:<40} Score: {item['score']:.4f}")
+    explanation = shap.Explanation(
+        values=df_display['contribution'].values,
+        base_values=base_value,
+        data=df_display['gat_attention'].values,
+        feature_names=df_display['feature_name'].tolist()
+    )
+    fig, ax = plt.subplots(figsize=(24, 12))
+    shap.plots.waterfall(explanation, max_display=top_k, show=False)
+    current_fig = plt.gcf()
+    current_fig.subplots_adjust(left=0.4)
+    ax.tick_params(axis='y', which='major', labelsize=10)
+    final_logit = base_value + df_display['contribution'].sum()
+    plt.title(f"Triplet Contributions for '{pred_class_name}'\nFinal Logit ≈ {final_logit:.2f}", fontsize=14)
+    output_filename = "triplet_contribution_waterfall_final_fixed.jpg"
+    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
+    print(f"最终修复版三元组贡献瀑布图已保存到: {output_filename}")
+    plt.show()
 
 
 def interpretable():
     model = create_model(25, 19, 20)
     model.eval()
     model.to(device)
-    image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
+    # image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
     # image_path = 'data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg'
-    # image_path = 'data/CUB_200_2011/images/003.Sooty_Albatross/Sooty_Albatross_0001_1071.jpg'
-    try:
-        pil_image = Image.open(image_path).convert('RGB')
-    except FileNotFoundError:
-        print(f"错误: 找不到图像文件 '{image_path}'。请创建一个虚拟图像或提供正确路径。")
-        pil_image = Image.fromarray(np.uint8(np.random.rand(224, 224, 3) * 255))
-    # explain_with_object_detection(model, pil_image, CLASS_LABELS)
+    image_path = 'data/CUB_200_2011/images/003.Sooty_Albatross/Sooty_Albatross_0001_1071.jpg'
+    pil_image = Image.open(image_path).convert('RGB')
+    explain_with_object_detection(model, pil_image, NODE_LABELS, CLASS_LABELS)
     # explain_with_graph(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
     explain_with_heatmap(model, pil_image, CLASS_LABELS)
+    explain_with_waterfall(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
 
 
 if __name__ == '__main__':

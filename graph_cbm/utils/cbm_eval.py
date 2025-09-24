@@ -24,8 +24,7 @@ class CBMEvaluator:
         for key in self.result_dict:
             self.result_dict[key] = []
 
-    def compute_bin_accuracy(self, y_probs, y_true):
-        y_pred = y_probs.argmax(dim=-1).cpu().detach().numpy()
+    def compute_bin_accuracy(self, y_pred, y_true):
         y_true = y_true.astype(int)  # Ensure y_true is integer
 
         # Calculate metrics

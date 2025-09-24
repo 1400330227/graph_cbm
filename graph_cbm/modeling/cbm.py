@@ -178,28 +178,35 @@ class CBMModel(nn.Module):
             return loss
 
         result = self.post_processor(y_logits, rel_graphs, attn_weights, gat_attention_info, image_sizes,
-                                     original_image_sizes, num_objs, num_rels, proj_maps)
+                                     original_image_sizes, num_objs, num_rels, proj_maps, x_gnn)
         return result
 
     def post_processor(self, y_logits, relation_graphs, attn_weights, gat_attention_info, image_sizes,
-                       original_image_sizes, num_objs, num_rels, proj_maps):
-        if gat_attention_info is not None:
-            num_edges_per_graph = num_rels
-            per_graph_attn_weights = gat_attention_info[1].split(num_edges_per_graph, dim=0)
-        else:
-            per_graph_attn_weights = [None] * len(relation_graphs)
+                       original_image_sizes, num_objs, num_rels, proj_maps, x_gnn):
+        relation_attentions = gat_attention_info[1].split(num_rels, dim=0)
         proj_maps = proj_maps.split(num_objs, dim=0)
-        attn_weights_list = attn_weights.split(num_objs, dim=0)
+        object_attentions = attn_weights.split(num_objs, dim=0)
+        x_gnns = x_gnn.split(num_objs, dim=0)
         result = []
         for i, graph in enumerate(relation_graphs):
             boxes = graph["boxes"]
             boxes = resize_boxes(boxes, image_sizes[i], original_image_sizes[i])
             graph["boxes"] = boxes
             graph["y_logit"] = y_logits[i]
-            graph["y_prob"] = F.softmax(y_logits[i], dim=-1)
-            graph["object_attention_weights"] = attn_weights_list[i]
-            graph["gat_relation_attention"] = per_graph_attn_weights[i]
+            graph["y_prob"] = y_prob = F.softmax(y_logits[i], dim=-1)
+            graph["object_attention"] = object_attentions[i]
+            graph["relation_attention"] = relation_attentions[i]
             graph["proj_map"] = proj_maps[i]
+            # Contribution(i -> j on class c) ≈ ObjectAttn(j) * GATAttn(i->j) * FeatureContribution(i to c)
+            rel_pairs = graph["rel_pair_idxs"]
+            source_nodes, target_nodes = rel_pairs[:, 0], rel_pairs[:, 1]
+            pred_class_idx = torch.argmax(y_prob)
+            classifier_weights = self.classifier.weight[pred_class_idx]
+            feat_contrib_of_sources = torch.matmul(x_gnns[i][source_nodes], classifier_weights)
+            obj_attn_of_targets = object_attentions[i][target_nodes].squeeze(-1)
+            rel_attn_scores = relation_attentions[i].squeeze(-1)
+            contributions = (obj_attn_of_targets + rel_attn_scores + feat_contrib_of_sources) / 2
+            graph['triplet_contributions'] = F.relu(contributions)
             result.append(graph)
         return result
 

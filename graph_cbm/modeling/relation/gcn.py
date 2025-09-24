@@ -97,47 +97,27 @@ class RelationalGAT(nn.Module):
         self.relation_embedding = nn.Embedding(num_relations, relation_embedding_dim)
         self.layers = nn.ModuleList()
         hidden_channels = node_feature_dim // heads
-        self.layers.append(
-            GATv2Conv(
-                in_channels=node_feature_dim,
-                out_channels=hidden_channels,
-                heads=heads,
-                concat=True,  # 输出维度将是 hidden_channels * heads
-                dropout=dropout_prob,
-                edge_dim=relation_embedding_dim
-            )
-        )
-
-        for _ in range(num_layers - 2):
+        for index in range(num_layers):
+            is_last_layer = (index == num_layers - 1)
+            out_channels = node_feature_dim if is_last_layer else hidden_channels
+            heads = 1 if is_last_layer else heads
+            concat = False if is_last_layer else True
             self.layers.append(
                 GATv2Conv(
-                    in_channels=hidden_channels * heads,
-                    out_channels=hidden_channels,
+                    in_channels=node_feature_dim,
+                    out_channels=out_channels,
                     heads=heads,
-                    concat=True,
+                    concat=concat,
                     dropout=dropout_prob,
                     edge_dim=relation_embedding_dim
                 )
             )
-
-        self.layers.append(
-            GATv2Conv(
-                in_channels=hidden_channels * heads,
-                out_channels=node_feature_dim,
-                heads=1,
-                concat=False,
-                dropout=dropout_prob,
-                edge_dim=relation_embedding_dim
-            )
-        )
-
         self.activation = nn.ELU()
         self.dropout = nn.Dropout(p=dropout_prob)
 
     def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list):
         if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
             return node_features
-
         edge_index_batch = []
         edge_type_batch = []
         offset = 0
@@ -145,31 +125,19 @@ class RelationalGAT(nn.Module):
             edge_index_batch.append(edge_index + offset)
             edge_type_batch.append(edge_type_list[i])
             offset += num_nodes_list[i]
-
         edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
         edge_type_batch = torch.cat(edge_type_batch, dim=0).contiguous()
         edge_attr = self.relation_embedding(edge_type_batch)
-
         x = node_features
-        last_layer_attention_info = None
+        attentions = None
         for i, layer in enumerate(self.layers):
-            x_input = x
-            x, full_attention_info = layer(x, edge_index_batch, edge_attr=edge_attr, return_attention_weights=True)
-            if i == len(self.layers) - 1:
-                last_layer_attention_info = full_attention_info
-            if i < len(self.layers) - 1:
-                x = self.activation(x)
-                x = self.dropout(x)
-            if x.shape == x_input.shape:
-                x = x + x_input
-        if last_layer_attention_info is None or last_layer_attention_info[1] is None:
-            return x, (None, None)
-
-        edge_index_with_self_loops, attention_weights_full = last_layer_attention_info
+            gcn_update, attentions = layer(x, edge_index_batch, edge_attr=edge_attr, return_attention_weights=True)
+            x = x + self.dropout(self.activation(gcn_update))
+        edge_index_with_self_loops, attention_weights_full = attentions
         is_not_self_loop = edge_index_with_self_loops[0] != edge_index_with_self_loops[1]
-        original_edges_attention = attention_weights_full[is_not_self_loop]
-
-        return x, (edge_index_batch, original_edges_attention)
+        edges_attention = attention_weights_full[is_not_self_loop]
+        edges_index = edge_index_with_self_loops[:, is_not_self_loop]
+        return x, (edges_index, edges_attention)
 
 
 if __name__ == '__main__':

@@ -2,16 +2,28 @@ import math
 import sys
 import time
 
+import numpy as np
 import torch
-
+import seaborn as sns
+from matplotlib import pyplot as plt
 from .cbm_eval import CBMEvaluator
 from .coco_utils import get_coco_api_from_dataset
 from .coco_eval import CocoEvaluator
 import graph_cbm.utils.distributed_utils as utils
 from .sg_eval import BasicSceneGraphEvaluator
+from sklearn.metrics import confusion_matrix
+
+# CLASS_LABELS = {
+#     0: "Black_footed_Albatross", 1: "Laysan_Albatross", 2: "Sooty_Albatross", 3: "Groove_billed_Ani",
+#     4: "Crested_Auklet", 5: "Least_Auklet", 6: "Parakeet_Auklet", 7: "Rhinoceros_Auklet",
+#     8: "Brewer_Blackbird", 9: "Red_winged_Blackbird", 10: "Rusty_Blackbird", 11: "Yellow_headed_Blackbird",
+#     12: "Bobolink", 13: "Indigo_Bunting", 14: "Lazuli_Bunting", 15: "Painted_Bunting",
+#     16: "Cardinal", 17: "Spotted_Catbird", 18: "Gray_Catbird", 19: "Yellow_breasted_Chat"
+# }
 
 
-def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=50, warmup=False, scaler=None,weights=None):
+def train_one_epoch(model, optimizer, data_loader, device, epoch, print_freq=50, warmup=False, scaler=None,
+                    weights=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -165,8 +177,9 @@ def cbm_evaluate(model, data_loader, device):
     model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = "Test: "
-
     cbm_evaluator = CBMEvaluator()
+    # all_preds = []
+    # all_labels = []
     for image, targets in metric_logger.log_every(data_loader, 100, header):
         image = list(img.to(device) for img in image)
 
@@ -180,10 +193,34 @@ def cbm_evaluate(model, data_loader, device):
         model_time = time.time() - model_time
 
         evaluator_time = time.time()
-        cbm_val_batch(targets, outputs, cbm_evaluator)
+        # cbm_val_batch(targets, outputs, cbm_evaluator)
+        y_probs = torch.stack([output["y_logit"] for output in outputs], dim=0).detach().cpu().numpy()
+        y_pred = np.argmax(y_probs, axis=1)
+        y_true = torch.concat([target["class_label"] for target in targets], dim=0).detach().cpu().numpy()
+        cbm_evaluator.compute_bin_accuracy(y_pred, y_true)
+        # all_preds.extend(y_pred)
+        # all_labels.extend(y_true)
+
         evaluator_time = time.time() - evaluator_time
         metric_logger.update(model_time=model_time, evaluator_time=evaluator_time)
-
+    # cm = confusion_matrix(all_labels, all_preds)
+    # fig, ax = plt.subplots(figsize=(max(12, 20 // 2), max(10, 20 // 2.5)))
+    # sns.heatmap(
+    #     cm,
+    #     annot=True,  # 在每个单元格中显示数值
+    #     fmt='d',  # 将数值格式化为整数
+    #     cmap='Blues',  # 选择一个颜色映射
+    #     ax=ax,
+    #     xticklabels=CLASS_LABELS.values(),
+    #     yticklabels=CLASS_LABELS.values()
+    # )
+    # ax.set_xlabel('Predicted Label', fontsize=14)
+    # ax.set_ylabel('True Label', fontsize=14)
+    # ax.set_title('Confusion Matrix', fontsize=18)
+    # plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    # plt.tight_layout()
+    # plt.show()
+    # plt.close(fig)
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     cbm_evaluator.print_results()
@@ -224,3 +261,18 @@ def _get_iou_types(model):
         model_without_ddp = model.module
     iou_types = ["bbox"]
     return iou_types
+
+
+def compute_base_value(model, data_loader, device):
+    cpu_device = torch.device("cpu")
+    model.eval()
+
+    all_scene_features = []
+    for batch_idx, (image, targets) in enumerate(data_loader):
+        image = list(img.to(device) for img in image)
+        if device != torch.device("cpu"):
+            torch.cuda.synchronize(device)
+        outputs = model(image)
+        outputs = [{k: v.to(cpu_device) for k, v in t.items()} for t in outputs]
+        scene_feat = outputs['scene_features']
+        all_scene_features.append(outputs)
