@@ -336,9 +336,9 @@ def interpretable():
     model = create_model(25, 19, 20)
     model.eval()
     model.to(device)
-    # image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
+    image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
     # image_path = 'data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg'
-    image_path = 'data/CUB_200_2011/images/003.Sooty_Albatross/Sooty_Albatross_0001_1071.jpg'
+    # image_path = 'data/CUB_200_2011/images/003.Sooty_Albatross/Sooty_Albatross_0001_1071.jpg'
     pil_image = Image.open(image_path).convert('RGB')
     explain_with_object_detection(model, pil_image, NODE_LABELS, CLASS_LABELS)
     # explain_with_graph(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)

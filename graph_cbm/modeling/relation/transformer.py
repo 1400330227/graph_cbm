@@ -17,7 +17,7 @@ def pad_packed_sequence(x, num_objs):
     return recovered_x
 
 
-class TransformerEncoder(nn.Module):
+class TransformerContext(nn.Module):
     def __init__(
             self,
             # transformer
@@ -26,59 +26,35 @@ class TransformerEncoder(nn.Module):
             depth,
             # linear
             hidden_dim,
+            use_cls: False
     ):
-        super(TransformerEncoder, self).__init__()
+        super(TransformerContext, self).__init__()
         self.embedding_dim = embedding_dim
         self.num_heads = num_heads
         self.depth = depth
         self.hidden_dim = hidden_dim
+        self.use_cls = use_cls
         self.blocks = nn.ModuleList()
         for _ in range(depth):
             block = Block(embedding_dim=embedding_dim, num_heads=num_heads)
             self.blocks.append(block)
         self.mlp = MLP(embedding_dim, embedding_dim // 2, hidden_dim, 1)
         self.ln = nn.LayerNorm(hidden_dim)
+        if use_cls:
+            self.cls_token = nn.Parameter(torch.randn(1, 1, embedding_dim))
 
     def forward(self, x, num_objs):
         x = pad_sequence(x.split(num_objs, dim=0), batch_first=True)
+        if self.use_cls:
+            cls_token = self.cls_token.expand(x.shape[0], -1, -1)
+            x = torch.cat((cls_token, x), dim=1)
         for block in self.blocks:
             x = block(x)
         x = self.ln(self.mlp(x))
-        x = pad_packed_sequence(x, num_objs)
-        return x
-
-
-class TransformerEdgeEncoder(nn.Module):
-    def __init__(
-            self,
-            # transformer
-            embedding_dim,
-            num_heads,
-            depth,
-            # linear
-            hidden_dim,
-    ):
-        super(TransformerEdgeEncoder, self).__init__()
-        self.embedding_dim = embedding_dim
-        self.num_heads = num_heads
-        self.depth = depth
-        self.hidden_dim = hidden_dim
-        self.blocks = nn.ModuleList()
-        for _ in range(depth):
-            block = Block(embedding_dim=embedding_dim, num_heads=num_heads)
-            self.blocks.append(block)
-        self.mlp = MLP(embedding_dim, embedding_dim // 2, hidden_dim, 1)
-        self.ln = nn.LayerNorm(hidden_dim)
-        self.cls_token = nn.Parameter(torch.randn(1, 1, embedding_dim))
-
-    def forward(self, x, num_objs):
-        x = pad_sequence(x.split(num_objs, dim=0), batch_first=True)
-        cls_token = self.cls_token.expand(x.shape[0], -1, -1)
-        x = torch.cat((cls_token, x), dim=1)
-        for block in self.blocks:
-            x = block(x)
-        x = self.ln(self.mlp(x))
-        x = x[:, 0, :]
+        if self.use_cls:
+            x = x[:, 0, :]
+        else:
+            x = pad_packed_sequence(x, num_objs)
         return x
 
 
@@ -94,6 +70,7 @@ class MultiLayerCrossAttentionFusion(nn.Module):
         for layer in self.layers:
             local_features = layer(local_features, global_features)
         return local_features
+
 
 class CrossAttentionFusion(nn.Module):
     def __init__(self, representation_dim, hidden_dim, num_heads=8, dropout=0.1):
@@ -168,6 +145,7 @@ class CrossAttentionFusion(nn.Module):
 
         return output
 
+
 class Attention(nn.Module):
     """
     An attention layer that allows for downscaling the size of the embedding
@@ -224,52 +202,6 @@ class Attention(nn.Module):
         out = self.out_proj(out)
 
         return out
-
-
-class PositionEmbeddingRandom(nn.Module):
-    """
-    Positional encoding using random spatial frequencies.
-    """
-
-    def __init__(self, num_pos_feats: int = 64, scale: Optional[float] = None) -> None:
-        super().__init__()
-        if scale is None or scale <= 0.0:
-            scale = 1.0
-        self.register_buffer(
-            "positional_encoding_gaussian_matrix",
-            scale * torch.randn((2, num_pos_feats)),
-        )
-
-    def _pe_encoding(self, coords: torch.Tensor) -> torch.Tensor:
-        """Positionally encode points that are normalized to [0,1]."""
-        # assuming coords are in [0, 1]^2 square and have d_1 x ... x d_n x 2 shape
-        coords = 2 * coords - 1
-        coords = coords @ self.positional_encoding_gaussian_matrix
-        coords = 2 * np.pi * coords
-        # outputs d_1 x ... x d_n x C shape
-        return torch.cat([torch.sin(coords), torch.cos(coords)], dim=-1)
-
-    def forward(self, size: Tuple[int, int]) -> torch.Tensor:
-        """Generate positional encoding for a grid of the specified size."""
-        h, w = size
-        device: Any = self.positional_encoding_gaussian_matrix.device
-        grid = torch.ones((h, w), device=device, dtype=torch.float32)
-        y_embed = grid.cumsum(dim=0) - 0.5
-        x_embed = grid.cumsum(dim=1) - 0.5
-        y_embed = y_embed / h
-        x_embed = x_embed / w
-
-        pe = self._pe_encoding(torch.stack([x_embed, y_embed], dim=-1))
-        return pe.permute(2, 0, 1)  # C x H x W
-
-    def forward_with_coords(
-            self, coords_input: torch.Tensor, image_size: Tuple[int, int]
-    ) -> torch.Tensor:
-        """Positionally encode points that are not normalized to [0,1]."""
-        coords = coords_input.clone()
-        coords[:, :, 0] = coords[:, :, 0] / image_size[1]
-        coords[:, :, 1] = coords[:, :, 1] / image_size[0]
-        return self._pe_encoding(coords.to(torch.float))  # B x N x C
 
 
 class MLPBlock(nn.Module):

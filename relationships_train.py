@@ -156,8 +156,6 @@ def main(args):
             warmup=True,
             scaler=scaler,
             weights=relation_weights,
-            sgg_weight=args.sgg_weight,
-            cls_weight=args.cls_weight,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
@@ -217,8 +215,6 @@ if __name__ == "__main__":
     parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
     parser.add_argument("--mode", default='predcls', choices=['predcls', 'sgcls', 'sgdet', 'preddet'],
                         help="Use torch.cuda.amp for mixed precision training")
-    parser.add_argument('--sgg_weight', default=1, type=int, help='sgg_weight')
-    parser.add_argument('--cls_weight', default=1, type=int, help='cls_weight')
     args = parser.parse_args()
     print(args)
     if not os.path.exists(args.output_dir):

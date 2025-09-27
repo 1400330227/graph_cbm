@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from graph_cbm.modeling.relation.transformer import PositionEmbeddingRandom, TransformerEncoder, TransformerEdgeEncoder
+from graph_cbm.modeling.relation.transformer import TransformerContext
 
 
 def relation_loss(rel_labels, relation_logits, rel_weights=None):
@@ -50,7 +50,7 @@ class Predictor(nn.Module):
         self.feature_extractor = FeatureExtractor(feature_extractor_dim, representation_dim)
         self.later_nms_pred_thres = later_nms_pred_thres
 
-        self.position_encoder = PositionEmbeddingRandom(num_pos_feats=embedding_dim // 2)
+        # self.position_encoder = PositionEmbeddingRandom(num_pos_feats=embedding_dim // 2)
         self.lin_obj = nn.Linear(representation_dim + embedding_dim + 128, hidden_dim)
         self.lin_edge = nn.Linear(embedding_dim + hidden_dim, hidden_dim)
 
@@ -62,8 +62,8 @@ class Predictor(nn.Module):
         self.obj_embed1 = nn.Embedding(self.obj_classes, embedding_dim)
         self.obj_embed2 = nn.Embedding(self.obj_classes, embedding_dim)
 
-        self.obj_encoder = TransformerEncoder(hidden_dim, num_heads, 4, hidden_dim)
-        self.edge_encoder = TransformerEdgeEncoder(hidden_dim, num_heads, 4, hidden_dim)
+        self.local_context = TransformerContext(hidden_dim, num_heads, 4, hidden_dim, False)
+        self.global_context = TransformerContext(hidden_dim, num_heads, 4, hidden_dim, True)
 
         self.obj_classifier = nn.Linear(hidden_dim, obj_classes)
         self.edge_classifier = nn.Linear(self.representation_dim, relation_classes)
@@ -109,20 +109,20 @@ class Predictor(nn.Module):
         obj_representation = self.lin_obj(obj_representation)
 
         # 1. 获取每个对象的精炼特征
-        obj_embedding = self.obj_encoder(obj_representation, num_objs)
+        local_embedding = self.local_context(obj_representation, num_objs)
 
         obj_preds = proposal_labels
         obj_logits = proposal_logits
         obj_embed2 = self.obj_embed2(obj_preds.long())
 
         # 2. 准备 edge_encoder 的输入，并获取全局上下文
-        features_for_edge_encoder = torch.concat((obj_embedding, obj_embed2), dim=-1)
+        features_for_edge_encoder = torch.concat((local_embedding, obj_embed2), dim=-1)
         features_for_edge_encoder = self.lin_edge(features_for_edge_encoder)
-        global_context = self.edge_encoder(features_for_edge_encoder, num_objs)  # Shape: (batch_size, hidden_dim)
+        global_embedding = self.global_context(features_for_edge_encoder, num_objs)  # Shape: (batch_size, hidden_dim)
 
         # 3. 提取每个关系对的局部特征（head & tail）
-        head_obj_reps = obj_embedding.split(num_objs, dim=0)
-        tail_obj_reps = obj_embedding.split(num_objs, dim=0)
+        head_obj_reps = local_embedding.split(num_objs, dim=0)
+        tail_obj_reps = local_embedding.split(num_objs, dim=0)
 
         pair_reps_list = []
         for pair_idx, head_rep, tail_rep in zip(rel_pair_idxs, head_obj_reps, tail_obj_reps):
@@ -136,8 +136,8 @@ class Predictor(nn.Module):
         local_semantic_rep = self.post_cat(pair_rep)  # Shape: (total_relations, representation_dim)
 
         # 5. 扩展并投射全局上下文，使其与每个关系对应
-        num_rels_per_image = torch.tensor(num_rels, device=global_context.device)
-        global_context_expanded = global_context.repeat_interleave(num_rels_per_image, dim=0)
+        num_rels_per_image = torch.tensor(num_rels, device=global_embedding.device)
+        global_context_expanded = global_embedding.repeat_interleave(num_rels_per_image, dim=0)
 
         # 6. 使用拼接 + 线性层的方式融合局部和全局语义信息
         fused_semantic_rep = torch.cat([local_semantic_rep, global_context_expanded], dim=-1)

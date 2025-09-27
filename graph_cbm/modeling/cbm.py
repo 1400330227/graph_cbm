@@ -226,7 +226,7 @@ def build_model(
         relation_classes=relation_classes,
         detector_weights_path='',
         weights_path=scene_graph_weights_path,
-        rel_score_thresh=0.3,
+        rel_score_thresh=0.1,
         use_cbm=True,
     )
     target_model, transform = get_target_model(target_name)

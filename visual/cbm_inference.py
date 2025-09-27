@@ -4,7 +4,7 @@ import torch
 
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
-from graph_cbm.modeling.graph_cbm import GraphCBM
+from graph_cbm.modeling.scene_graph import SceneGraph
 from graph_cbm.modeling.relation.predictor import Predictor
 
 
@@ -17,7 +17,7 @@ def create_model(num_classes, relation_classes):
         obj_classes=num_classes,
         relation_classes=relation_classes,
     )
-    model = GraphCBM(detector, predictor)
+    model = SceneGraph(detector, predictor)
     return model
 
 

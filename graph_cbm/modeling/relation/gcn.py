@@ -1,93 +1,172 @@
 import torch
 import torch.nn as nn
-
-from torch.nn.utils.rnn import pad_sequence
-
-try:
-    from torch_geometric.nn import GCNConv, RGCNConv, GATv2Conv
-    from torch_geometric.utils import add_self_loops, remove_self_loops
-except ImportError:
-    print("PyTorch Geometric not found. Please install it to use the GCN module.")
-    GCNConv = None
-    RGCNConv = None
-    add_self_loops = None
-    GATConv = None
+import torch.nn.functional as F
+from typing import Union, Tuple, Optional
+from torch_geometric.typing import (Adj, Size, OptTensor, PairTensor)
+from torch import Tensor
+from torch.nn import Parameter
+from torch_sparse import SparseTensor, set_diag
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.utils import remove_self_loops, add_self_loops, softmax
+from torch_geometric.nn.inits import glorot, zeros
 
 
-def unpad_sequence(x, num_objs):
-    recovered_chunks = []
-    for i in range(len(num_objs)):
-        seq_len = num_objs[i]
-        recovered_chunks.append(x[i, :seq_len, :])
-    recovered_x = torch.cat(recovered_chunks, dim=0)
-    return recovered_x
+class GATConv(MessagePassing):
+    """
+    The GATv2 operator from the `"How Attentive are Graph Attention Networks?"
+    <https://arxiv.org/abs/2105.14491>`_ paper, which fixes the static
+    attention problem of the standard :class:`~torch_geometric.conv.GATConv`
+    layer: since the linear layers in the standard GAT are applied right after
+    each other, the ranking of attended nodes is unconditioned on the query
+    node. In contrast, in GATv2, every node can attend to any other node.
+    """
+    _alpha: OptTensor
 
+    def __init__(self, in_channels: Union[int, Tuple[int, int]],
+                 out_channels: int, heads: int = 1, concat: bool = True,
+                 negative_slope: float = 0.2, dropout: float = 0.0,
+                 add_self_loops: bool = True, edge_dim: Optional[int] = None,
+                 fill_value: Union[float, Tensor, str] = 'mean',
+                 bias: bool = True, share_weights: bool = False, **kwargs):
+        super(GATConv, self).__init__(node_dim=0, **kwargs)
 
-class GCN(nn.Module):
-    def __init__(self, node_feature_dim: int, num_layers: int = 2, dropout_prob: float = 0.3):
-        super(GCN, self).__init__()
-        if GCNConv is None:
-            raise ImportError("GCNConv could not be imported. Please ensure PyTorch Geometric is installed correctly.")
-        self.layers = nn.ModuleList()
-        for _ in range(num_layers):
-            self.layers.append(GCNConv(node_feature_dim, node_feature_dim))
-        self.activation = nn.ReLU()
-        self.dropout = nn.Dropout(p=dropout_prob)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.heads = heads
+        self.concat = concat
+        self.negative_slope = negative_slope
+        self.dropout = dropout
+        self.add_self_loops = add_self_loops
+        self.edge_dim = edge_dim
+        self.fill_value = fill_value
+        self.share_weights = share_weights
 
-    def forward(self, node_features, edge_index_list, num_nodes_list) -> torch.Tensor:
-        flat_node_features = unpad_sequence(node_features, num_nodes_list)
-        if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
-            return node_features
-        edge_index_batch = []
-        offset = 0
-        for i, edge_index in enumerate(edge_index_list):
-            edge_index_batch.append(edge_index + offset)
-            offset += num_nodes_list[i]
-        edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
-        edge_index_with_self_loops, _ = add_self_loops(edge_index_batch, num_nodes=node_features.size(0))
-        x = flat_node_features
-        for layer in self.layers:
-            gcn_update = layer(x, edge_index_with_self_loops)
-            x = x + self.dropout(self.activation(gcn_update))
-        refined_flat_features = x
-        refined_features_list = refined_flat_features.split(num_nodes_list, dim=0)
-        refined_batched_sequence = pad_sequence(refined_features_list, batch_first=True, padding_value=0.0)
-        return refined_batched_sequence
+        if isinstance(in_channels, int):
+            self.lin_l = nn.Linear(in_channels, heads * out_channels, bias=bias)
+            if share_weights:
+                self.lin_r = self.lin_l
+            else:
+                self.lin_r = nn.Linear(in_channels, heads * out_channels,
+                                       bias=bias)
+        else:
+            self.lin_l = nn.Linear(in_channels[0], heads * out_channels, True)
+            if share_weights:
+                self.lin_r = self.lin_l
+            else:
+                self.lin_r = nn.Linear(in_channels[1], heads * out_channels, True)
 
+        self.att = Parameter(torch.Tensor(1, heads, out_channels))
 
-class RGCN(nn.Module):
-    def __init__(self, node_feature_dim: int, num_relations: int, num_layers: int = 2, dropout_prob: float = 0.3):
-        super(RGCN, self).__init__()
-        if RGCNConv is None:
-            raise ImportError("RGCNConv could not be imported. Please ensure PyTorch Geometric is installed correctly.")
-        self.layers = nn.ModuleList()
-        for _ in range(num_layers):
-            self.layers.append(GATConv(node_feature_dim, node_feature_dim, num_relations))
-        self.activation = nn.ReLU()
-        self.dropout = nn.Dropout(p=dropout_prob)
+        if edge_dim is not None:
+            self.lin_edge = nn.Linear(edge_dim, heads * out_channels, bias=False)
+        else:
+            self.lin_edge = None
 
-    def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list) -> torch.Tensor:
-        if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
-            return node_features
-        assert len(edge_index_list) == len(edge_type_list)
+        if bias and concat:
+            self.bias = Parameter(torch.Tensor(heads * out_channels))
+        elif bias and not concat:
+            self.bias = Parameter(torch.Tensor(out_channels))
+        else:
+            self.register_parameter('bias', None)
 
-        edge_index_batch = []
-        edge_type_batch = []
-        offset = 0
-        for i, edge_index in enumerate(edge_index_list):
-            edge_index_batch.append(edge_index + offset)
-            edge_type_batch.append(edge_type_list[i])
-            offset += num_nodes_list[i]
+        self._alpha = None
 
-        edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
-        edge_type_batch = torch.cat(edge_type_batch, dim=0).contiguous()
+        self.reset_parameters()
 
-        x = node_features
-        for layer in self.layers:
-            gcn_update = layer(x, edge_index_batch, edge_type_batch)
-            x = x + self.dropout(self.activation(gcn_update))
+    def reset_parameters(self):
+        glorot(self.lin_l.weight)
+        glorot(self.lin_r.weight)
+        if self.lin_edge is not None:
+            glorot(self.lin_edge.weight)
+        glorot(self.att)
+        zeros(self.bias)
 
-        return x
+    def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj,
+                edge_attr: OptTensor = None, size: Size = None,
+                return_attention_weights: bool = None):
+        r"""
+        Args:
+            return_attention_weights (bool, optional): If set to :obj:`True`,
+                will additionally return the tuple
+                :obj:`(edge_index, attention_weights)`, holding the computed
+                attention weights for each edge. (default: :obj:`None`)
+        """
+        H, C = self.heads, self.out_channels
+
+        if isinstance(x, Tensor):
+            x_l: OptTensor = x
+            x_r: OptTensor = x
+        else:
+            x_l, x_r = x[0], x[1]
+
+        x_l = self.lin_l(x_l).view(-1, H, C)
+        if self.share_weights:
+            x_r = self.lin_l(x_r).view(-1, H, C)
+        else:
+            x_r = self.lin_r(x_r).view(-1, H, C)
+
+        assert x_l is not None
+        assert x_r is not None
+
+        if self.add_self_loops:
+            if isinstance(edge_index, Tensor):
+                num_nodes = x_l.size(0)
+                if x_r is not None:
+                    num_nodes = min(num_nodes, x_r.size(0))
+                if size is not None:
+                    num_nodes = min(size[0], size[1])
+                edge_index, edge_attr = remove_self_loops(
+                    edge_index, edge_attr)
+                edge_index, edge_attr = add_self_loops(
+                    edge_index, edge_attr, fill_value=self.fill_value,
+                    num_nodes=num_nodes)
+            elif isinstance(edge_index, SparseTensor):
+                edge_index = set_diag(edge_index)
+
+        # propagate_type: (x: PairTensor, edge_attr: OptTensor)
+        out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr,
+                             size=size)
+
+        alpha = self._alpha
+        self._alpha = None
+
+        if self.concat:
+            out = out.view(-1, self.heads * self.out_channels)
+        else:
+            out = out.mean(dim=1)
+
+        if self.bias is not None:
+            out += self.bias
+
+        if return_attention_weights:
+            assert alpha is not None
+            if isinstance(edge_index, Tensor):
+                return out, (edge_index, alpha)
+            elif isinstance(edge_index, SparseTensor):
+                return out, edge_index.set_value(alpha, layout='coo')
+        else:
+            return out
+
+    def message(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
+                index: Tensor, ptr: OptTensor,
+                size_i: Optional[int]) -> Tensor:
+        x = x_i + x_j
+        if edge_attr is not None:
+            assert self.lin_edge is not None
+            edge_emb = self.lin_edge(edge_attr).view(-1, self.heads,
+                                                     self.out_channels)
+            x += edge_emb
+        x = F.leaky_relu(x, self.negative_slope)
+        alpha = (x * self.att).sum(dim=-1)
+        alpha = softmax(alpha, index, ptr, size_i)
+        self._alpha = alpha
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        return x_j * alpha.unsqueeze(-1)
+
+    def __repr__(self):
+        return '{}({}, {}, heads={})'.format(self.__class__.__name__,
+                                             self.in_channels,
+                                             self.out_channels, self.heads)
 
 
 class RelationalGAT(nn.Module):
@@ -103,7 +182,7 @@ class RelationalGAT(nn.Module):
             heads = 1 if is_last_layer else heads
             concat = False if is_last_layer else True
             self.layers.append(
-                GATv2Conv(
+                GATConv(
                     in_channels=node_feature_dim,
                     out_channels=out_channels,
                     heads=heads,
@@ -138,54 +217,3 @@ class RelationalGAT(nn.Module):
         edges_attention = attention_weights_full[is_not_self_loop]
         edges_index = edge_index_with_self_loops[:, is_not_self_loop]
         return x, (edges_index, edges_attention)
-
-
-if __name__ == '__main__':
-    # 1. 定义模型参数
-    FEATURE_DIM = 64
-    NUM_GCN_LAYERS = 2
-    BATCH_SIZE = 2
-
-    # 2. 准备模拟的批处理数据
-    num_nodes_g1 = 3
-    node_features_g1 = torch.randn(num_nodes_g1, FEATURE_DIM)
-    edge_index_g1 = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
-
-    num_nodes_g2 = 4
-    node_features_g2 = torch.randn(num_nodes_g2, FEATURE_DIM)
-    edge_index_g2 = torch.tensor([[0, 0, 1], [1, 2, 3]], dtype=torch.long)
-
-    # 3. 将数据整合成新的 `forward` 方法所要求的格式
-    # a. 将每个图的节点特征放入一个列表，然后用 pad_sequence 打包
-    features_list = [node_features_g1, node_features_g2]
-    # 形状: (2, 4, 64)，其中图1的最后一个节点是填充的
-    batched_sequence_input = pad_sequence(features_list, batch_first=True)
-
-    # b. 边索引列表 (保持不变)
-    all_edge_indices = [edge_index_g1, edge_index_g2]
-
-    # c. 节点数量列表 (保持不变)
-    all_num_nodes = [num_nodes_g1, num_nodes_g2]
-
-    print("--- 输入数据 ---")
-    print(f"输入序列张量形状: {batched_sequence_input.shape}")
-    print(f"节点数量列表: {all_num_nodes}")
-    print("-" * 20)
-
-    # 4. 实例化并调用模型
-    spatial_gcn_model = GCN(node_feature_dim=FEATURE_DIM, num_layers=NUM_GCN_LAYERS)
-
-    refined_sequence_output = spatial_gcn_model(
-        node_features=batched_sequence_input,
-        edge_index_list=all_edge_indices,
-        num_nodes_list=all_num_nodes
-    )
-
-    # 5. 查看输出结果
-    print("\n--- 输出结果 ---")
-    print(f"输出序列张量形状: {refined_sequence_output.shape}")
-    print("-" * 20)
-
-    # 验证：输出的序列张量形状应该和输入的完全一样
-    assert batched_sequence_input.shape == refined_sequence_output.shape
-    print("成功！输出的序列形状与输入一致。")
