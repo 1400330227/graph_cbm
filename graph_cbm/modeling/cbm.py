@@ -4,7 +4,7 @@ from typing import List, Optional
 from torch import nn, Tensor
 from torchvision.ops import MultiScaleRoIAlign
 from graph_cbm.modeling.detection.transform import resize_boxes
-from graph_cbm.modeling.relation.gcn import RelationalGAT
+from graph_cbm.modeling.relation.relation_aggregation import RelationAggregation
 from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
 from graph_cbm.modeling.target_model import get_target_model
 from torch_scatter import scatter_add, scatter_softmax
@@ -81,7 +81,7 @@ class CBMModel(nn.Module):
             nn.Linear(representation_dim, 1)
         )
         self.proj_layer = nn.Conv2d(out_channels, representation_dim, 1)
-        self.rgcn = RelationalGAT(representation_dim, self.num_relations)
+        self.relation_aggregation = RelationAggregation(representation_dim, self.num_relations)
         self.pool_layer = SoftmaxPooling2D(kernel_size=kernel_size)
         self.classifier = nn.Linear(representation_dim, n_tasks)
 
@@ -156,16 +156,16 @@ class CBMModel(nn.Module):
         num_objs = [rel['boxes'].shape[0] for rel in rel_graphs]
 
         x = torch.squeeze(self.pool_layer(x))
-        x_gnn, gat_attention_info = self.rgcn(x, edge_index_list, edge_type_list, num_objs)  # [N_total_objs,256]
+        x_aggregation, relation_attentions = self.relation_aggregation(x, edge_index_list, edge_type_list, num_objs)  # [N_total_objs,256]
 
         batch_size = len(num_objs)
         batch_idx = torch.repeat_interleave(
-            torch.arange(batch_size, device=x_gnn.device),
-            torch.tensor(num_objs, device=x_gnn.device)
+            torch.arange(batch_size, device=x_aggregation.device),
+            torch.tensor(num_objs, device=x_aggregation.device)
         )
-        attn_logits = self.attention_layer(x_gnn)  # [N_total_objs, 1]
+        attn_logits = self.attention_layer(x_aggregation)  # [N_total_objs, 1]
         attn_weights = scatter_softmax(attn_logits, batch_idx, dim=0)  # [N_total_objs, 1]
-        weighted_features = x_gnn * attn_weights  # [N_total_objs,256]
+        weighted_features = x_aggregation * attn_weights  # [N_total_objs,256]
         scene_features_batch = scatter_add(weighted_features, batch_idx, dim=0)  # [N_total_objs,256]->[N,256]
 
         y_logits = self.classifier(scene_features_batch)  # [N,20]
@@ -177,8 +177,8 @@ class CBMModel(nn.Module):
             loss['loss_task'] = loss_task
             return loss
 
-        result = self.post_processor(y_logits, rel_graphs, attn_weights, gat_attention_info, image_sizes,
-                                     original_image_sizes, num_objs, num_rels, proj_maps, x_gnn)
+        result = self.post_processor(y_logits, rel_graphs, attn_weights, relation_attentions, image_sizes,
+                                     original_image_sizes, num_objs, num_rels, proj_maps, x_aggregation)
         return result
 
     def post_processor(self, y_logits, relation_graphs, attn_weights, gat_attention_info, image_sizes,
@@ -198,15 +198,15 @@ class CBMModel(nn.Module):
             graph["relation_attention"] = relation_attentions[i]
             graph["proj_map"] = proj_maps[i]
             # Contribution(i -> j on class c) ≈ ObjectAttn(j) * GATAttn(i->j) * FeatureContribution(i to c)
-            rel_pairs = graph["rel_pair_idxs"]
-            source_nodes, target_nodes = rel_pairs[:, 0], rel_pairs[:, 1]
-            pred_class_idx = torch.argmax(y_prob)
-            classifier_weights = self.classifier.weight[pred_class_idx]
-            feat_contrib_of_sources = torch.matmul(x_gnns[i][source_nodes], classifier_weights)
-            obj_attn_of_targets = object_attentions[i][target_nodes].squeeze(-1)
-            rel_attn_scores = relation_attentions[i].squeeze(-1)
-            contributions = (obj_attn_of_targets + rel_attn_scores + feat_contrib_of_sources) / 2
-            graph['triplet_contributions'] = F.relu(contributions)
+            # rel_pairs = graph["rel_pair_idxs"]
+            # source_nodes, target_nodes = rel_pairs[:, 0], rel_pairs[:, 1]
+            # pred_class_idx = torch.argmax(y_prob)
+            # classifier_weights = self.classifier.weight[pred_class_idx]
+            # feat_contrib_of_sources = torch.matmul(x_gnns[i][source_nodes], classifier_weights)
+            # obj_attn_of_targets = object_attentions[i][target_nodes].squeeze(-1)
+            # rel_attn_scores = relation_attentions[i].squeeze(-1)
+            # contributions = (obj_attn_of_targets + rel_attn_scores + feat_contrib_of_sources) / 2
+            # graph['triplet_contributions'] = F.relu(contributions)
             result.append(graph)
         return result
 
