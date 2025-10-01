@@ -29,7 +29,7 @@ class FeatureExtractor(nn.Module):
         return x
 
 
-class Predictor(nn.Module):
+class RelationPredictor(nn.Module):
     def __init__(
             self,
             obj_classes,
@@ -41,7 +41,7 @@ class Predictor(nn.Module):
             hidden_dim=512,
             later_nms_pred_thres=0.5,
     ):
-        super(Predictor, self).__init__()
+        super(RelationPredictor, self).__init__()
         self.embedding_dim = embedding_dim
         self.num_heads = num_heads
         self.hidden_dim = hidden_dim
@@ -50,7 +50,6 @@ class Predictor(nn.Module):
         self.feature_extractor = FeatureExtractor(feature_extractor_dim, representation_dim)
         self.later_nms_pred_thres = later_nms_pred_thres
 
-        # self.position_encoder = PositionEmbeddingRandom(num_pos_feats=embedding_dim // 2)
         self.lin_obj = nn.Linear(representation_dim + embedding_dim + 128, hidden_dim)
         self.lin_edge = nn.Linear(embedding_dim + hidden_dim, hidden_dim)
 

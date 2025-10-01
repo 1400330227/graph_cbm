@@ -6,7 +6,7 @@ from graph_cbm.modeling.detection.backbone import (
     build_vgg_backbone, build_resnet50_backbone, build_mobilenet_backbone, build_efficientnet_backbone,
     build_swin_transformer_backbone)
 from graph_cbm.modeling.detection.detector import FasterRCNN
-from graph_cbm.modeling.relation.predictor import Predictor
+from graph_cbm.modeling.relation.relation_predictor import RelationPredictor
 from torchvision.ops import boxes as box_ops, MultiScaleRoIAlign
 from graph_cbm.modeling.detection.transform import resize_boxes
 from graph_cbm.utils.boxes import box_union
@@ -29,7 +29,7 @@ class SceneGraph(nn.Module):
     def __init__(
             self,
             detector: FasterRCNN,
-            predictor: Predictor,
+            predictor: RelationPredictor,
             feature_extractor_dim,
             representation_dim=1024,
             in_channels=256,
@@ -371,7 +371,7 @@ def build_scene_graph(
         detector.load_state_dict(detector_weights)
 
     representation_dim = detector.roi_heads.box_predictor.cls_score.in_features
-    predictor = Predictor(num_classes, relation_classes, representation_dim)
+    predictor = RelationPredictor(num_classes, relation_classes, representation_dim)
 
     model = SceneGraph(
         detector,
