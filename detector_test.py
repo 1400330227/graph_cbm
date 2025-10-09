@@ -1,8 +1,8 @@
 import os
 import datetime
 import torch
-from datasets import transforms
-from datasets.cub_dataset import CubDataset
+from data_utils import transforms
+from data_utils.cub_dataset import CubDataset
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.utils.eval_utils import evaluate

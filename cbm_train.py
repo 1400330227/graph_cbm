@@ -2,8 +2,8 @@ import os
 import datetime
 
 import torch
-from datasets import transforms
-from datasets.cub_dataset import CubDataset
+from data_utils import transforms
+from data_utils.cub_dataset import CubDataset
 from graph_cbm.modeling.cbm import build_model
 from graph_cbm.utils.eval_utils import train_one_epoch, cbm_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler

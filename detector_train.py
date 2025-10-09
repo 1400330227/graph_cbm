@@ -1,9 +1,9 @@
 import os
 import datetime
 import torch
-from datasets import transforms
-from datasets.cub_dataset import CubDataset
-from datasets.voc_dataset import VOCDataSet
+from data_utils import transforms
+from data_utils.cub_dataset import CubDataset
+from data_utils.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler
@@ -13,7 +13,7 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 def create_model(num_classes, args):
     backbone_name = args.backbone
     # weights_path = "save_weights/detector/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
-    weights_path = ''
+    weights_path = 'save_weights/detector/resnet50-fpn-model-best.pth'
     model = build_detector(backbone_name, num_classes, weights_path, is_train=True)
     return model
 

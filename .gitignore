@@ -15,7 +15,7 @@ dist/
 checkpoint/
 
 # dataset
-datasets/vg/
+data_utils/vg/
 *.png
 *.jpg
 *.jpeg

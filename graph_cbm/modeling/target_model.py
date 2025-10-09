@@ -4,7 +4,7 @@ from torchvision import models
 from pytorchcv.model_provider import get_model as ptcv_get_model
 from torchvision.models.feature_extraction import create_feature_extractor
 
-from datasets import transforms
+from data_utils import transforms
 
 
 def get_resnet_imagenet_preprocess():

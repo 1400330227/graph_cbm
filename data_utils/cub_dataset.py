@@ -8,7 +8,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torch_geometric.utils import classes
 
-from datasets import transforms
+from data_utils import transforms
 
 
 class CubDataset(Dataset):
@@ -20,12 +20,12 @@ class CubDataset(Dataset):
         self.annotations_root = os.path.join(self.root, "images.txt")
         self.classes_root = os.path.join(self.root, "classes.txt")
         self.train_test_split_root = os.path.join(self.root, "train_test_split.txt")
-        self.json_file = os.path.join(self.root, "cub_attributes.json")
-        self.predicate_file = os.path.join(self.root, "predicate.json")
+        self.json_file = os.path.join(self.root, "attributes.json")
+        self.relations_file = os.path.join(self.root, "relations.json")
         self.is_train = is_train
         self.train_val_data, test_data = [], []
         self.class_dict = {}
-        self.predicate_dict = {}
+        self.relations_dict = {}
         path_to_id_map = dict()
         with open(self.annotations_root) as f:
             for line in f:
@@ -47,8 +47,8 @@ class CubDataset(Dataset):
         with open(self.json_file, 'r') as f:
             self.class_dict = json.load(f)
 
-        with open(self.predicate_file, 'r') as f:
-            self.predicate_dict = json.load(f)
+        with open(self.relations_file, 'r') as f:
+            self.relations_dict = json.load(f)
 
         folder_list = [f for f in os.listdir(self.img_root) if isdir(join(self.img_root, f))]
         folder_list.sort()
@@ -106,8 +106,7 @@ class CubDataset(Dataset):
         target["area"] = area
         target["iscrowd"] = iscrowd
         target["relation"] = relations
-        # if relationship_path == 'data/CUB_200_2011/relations/011.Rusty_Blackbird/Rusty_Blackbird_0032_6611.json':
-        # self.set_relation_map(relationship_path, boxes, labels)
+        self.set_relation_map(relationship_path, boxes, labels)
         target["relation_tuple"] = relation_tuple
         target["class_label"] = class_label
         if self.transforms is not None:
@@ -196,7 +195,7 @@ class CubDataset(Dataset):
             obj_start, rel, obj_end = rel_pair[0], rel_pair[1], rel_pair[2]
             obj_start_label = self.class_dict.get(obj_start, -1)
             obj_end_label = self.class_dict.get(obj_end, -1)
-            rel_label = self.predicate_dict.get(rel, 0)
+            rel_label = self.relations_dict.get(rel, 0)
             if obj_start_label == -1 or obj_end_label == -1:
                 continue
             obj_relation_triplets.append((obj_start_label, obj_end_label, rel_label))
@@ -229,15 +228,41 @@ class CubDataset(Dataset):
             print(f"Error writing to {relationship_path}: {str(e)}")
 
 
+def calculate_class_weights(dataset, num_classes):
+    class_counts = torch.zeros(num_classes, dtype=torch.int64)
+    total_possible_rels = 0
+    for _, target in dataset:
+        rel_matrix = target['relation']
+        num_objs = len(target['labels'])
+        total_possible_rels += num_objs * (num_objs - 1)
+        unique_rels = rel_matrix[rel_matrix > 0].unique()
+        for rel_idx in unique_rels:
+            class_counts[rel_idx] += (rel_matrix == rel_idx).sum()
+    total_fg_rels = class_counts.sum()
+    class_counts[0] = total_possible_rels - total_fg_rels
+    zero_counts_mask = class_counts == 0
+    class_counts_smoothed = class_counts.clone()
+    class_counts_smoothed[zero_counts_mask] = 1
+    log_counts = torch.log(class_counts_smoothed)
+    epsilon = 1e-6
+    weights = torch.max(log_counts) / (log_counts + epsilon)
+    background_weight_factor = 0.1
+    weights[0] = weights[0] * background_weight_factor
+    weights = weights / torch.sum(weights) * num_classes
+    return weights
+
+
 if __name__ == '__main__':
     data_transform = {
         "train": transforms.Compose([transforms.ToTensor(), transforms.RandomHorizontalFlip(0.5)]),
         "val": transforms.Compose([transforms.ToTensor()])
     }
-    cub_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
+    cub_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], False)
 
     train_data_loader = torch.utils.data.DataLoader(cub_dataset, batch_size=2, shuffle=True,
                                                     collate_fn=cub_dataset.collate_fn)
+
+    calculate_class_weights(cub_dataset, 20)
 
     for i, (img, target) in enumerate(train_data_loader):
         print(len(img))

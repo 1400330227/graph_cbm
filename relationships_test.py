@@ -1,8 +1,8 @@
 import os
 import datetime
 import torch
-from datasets import transforms
-from datasets.cub_dataset import CubDataset
+from data_utils import transforms
+from data_utils.cub_dataset import CubDataset
 from graph_cbm.modeling.scene_graph import build_scene_graph
 from graph_cbm.utils.eval_utils import sg_evaluate
 from graph_cbm.utils.plot_curve import plot_map

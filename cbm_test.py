@@ -3,9 +3,9 @@ import datetime
 
 import numpy as np
 import torch
-from datasets import transforms
-from datasets.cub_dataset import CubDataset
-from datasets.voc_dataset import VOCDataSet
+from data_utils import transforms
+from data_utils.cub_dataset import CubDataset
+from data_utils.voc_dataset import VOCDataSet
 from graph_cbm.modeling.cbm import build_model
 from graph_cbm.utils.eval_utils import train_one_epoch, evaluate, sg_evaluate, cbm_evaluate
 from graph_cbm.utils.group_by_aspect_ratio import create_aspect_ratio_groups, GroupedBatchSampler

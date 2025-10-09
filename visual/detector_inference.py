@@ -215,7 +215,7 @@ def show_img():
     img = img_transform(img)
     boxes, scores, labels = inference(img, model)
 
-    with open("data/CUB_200_2011/cub_attributes.json", "r") as f:
+    with open("data/CUB_200_2011/attributes.json", "r") as f:
         json_data = json.load(f)
     #
     COCO_LABELS = []
@@ -227,7 +227,7 @@ def show_img():
 
 
 def save_json():
-    with open("data/CUB_200_2011/cub_attributes.json", "r") as f:
+    with open("data/CUB_200_2011/attributes.json", "r") as f:
         json_data = json.load(f)
     COCO_LABELS = []
     for i, key in enumerate(json_data.keys()):

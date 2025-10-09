@@ -167,7 +167,7 @@ def explain_with_graph(model, pil_image: Image, node_labels_map, edge_labels_map
         output_graphs = model([image_tensor])
     output_graph = output_graphs[0]
     gat_attention = output_graph['relation_attention']
-    edge_importance = gat_attention.mean(dim=1)
+    edge_importance = gat_attention
     target_node_idx = np.argmax(output_graph['object_attention'].cpu().numpy())
     visualize_subgraph(
         output_graph,
@@ -336,14 +336,15 @@ def interpretable():
     model = create_model(25, 19, 20)
     model.eval()
     model.to(device)
-    image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
+    # image_path = 'data/CUB_200_2011/images/012.Yellow_headed_Blackbird/Yellow_Headed_Blackbird_0003_8337.jpg'
     # image_path = 'data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0001_796111.jpg'
     # image_path = 'data/CUB_200_2011/images/003.Sooty_Albatross/Sooty_Albatross_0001_1071.jpg'
+    image_path = 'data/CUB_200_2011/images/001.Black_footed_Albatross/Black_Footed_Albatross_0005_796090.jpg'
     pil_image = Image.open(image_path).convert('RGB')
-    explain_with_object_detection(model, pil_image, NODE_LABELS, CLASS_LABELS)
-    # explain_with_graph(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
-    explain_with_heatmap(model, pil_image, CLASS_LABELS)
-    explain_with_waterfall(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
+    # explain_with_object_detection(model, pil_image, NODE_LABELS, CLASS_LABELS)
+    explain_with_graph(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
+    # explain_with_heatmap(model, pil_image, CLASS_LABELS)
+    # explain_with_waterfall(model, pil_image, NODE_LABELS, EDGE_LABELS, CLASS_LABELS)
 
 
 if __name__ == '__main__':

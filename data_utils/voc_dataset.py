@@ -5,7 +5,7 @@ import torch
 import json
 from PIL import Image
 from lxml import etree
-from datasets import transforms
+from data_utils import transforms
 
 
 class VOCDataSet(Dataset):

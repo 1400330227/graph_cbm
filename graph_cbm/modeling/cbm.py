@@ -139,7 +139,7 @@ class CBMModel(nn.Module):
         original_image_sizes = [(image.shape[-2], image.shape[-1]) for image in images]
         with torch.no_grad():
             rel_graphs, _ = self.graph(images, targets)
-        rel_graphs = self.filter_graphs_by_labels(rel_graphs, [24])
+        # rel_graphs = self.filter_graphs_by_labels(rel_graphs, [24])
         x, rel_graphs = self.preprocess(images, rel_graphs)
         image_sizes = [(x.shape[-2], x.shape[-1])] * x.shape[0]
         boxes = [rel['boxes'] for rel in rel_graphs]
@@ -182,11 +182,11 @@ class CBMModel(nn.Module):
         return result
 
     def post_processor(self, y_logits, relation_graphs, attn_weights, gat_attention_info, image_sizes,
-                       original_image_sizes, num_objs, num_rels, proj_maps, x_gnn):
+                       original_image_sizes, num_objs, num_rels, proj_maps, x_aggregation):
         relation_attentions = gat_attention_info[1].split(num_rels, dim=0)
         proj_maps = proj_maps.split(num_objs, dim=0)
         object_attentions = attn_weights.split(num_objs, dim=0)
-        x_gnns = x_gnn.split(num_objs, dim=0)
+        x_aggregation = x_aggregation.split(num_objs, dim=0)
         result = []
         for i, graph in enumerate(relation_graphs):
             boxes = graph["boxes"]

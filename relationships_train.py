@@ -3,9 +3,9 @@ import datetime
 
 import numpy as np
 import torch
-from datasets import transforms
-from datasets.cub_dataset import CubDataset
-from datasets.voc_dataset import VOCDataSet
+from data_utils import transforms
+from data_utils.cub_dataset import CubDataset
+from data_utils.voc_dataset import VOCDataSet
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
@@ -76,7 +76,7 @@ def main(args):
     #     raise FileNotFoundError("VOCdevkit dose not in path:'{}'.".format(VOC_root))
     # train_dataset = VOCDataSet(VOC_root, "2012", data_transform["train"], "train.txt")
     train_dataset = CubDataset("data/CUB_200_2011", data_transform["train"], True)
-    relation_weights = calculate_class_weights(train_dataset, args.relation_classes + 1, device)
+    # relation_weights = calculate_class_weights(train_dataset, args.relation_classes + 1, device)
     train_sampler = None
     if args.aspect_ratio_group_factor >= 0:
         train_sampler = torch.utils.data.RandomSampler(train_dataset)
@@ -155,7 +155,7 @@ def main(args):
             print_freq=50,
             warmup=True,
             scaler=scaler,
-            weights=relation_weights,
+            # weights=relation_weights,
         )
         train_loss.append(mean_loss.item())
         learning_rate.append(lr)
@@ -195,7 +195,7 @@ if __name__ == "__main__":
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=18, type=int, help='relation_classes')
+    parser.add_argument('--relation-classes', default=19, type=int, help='relation_classes')
     parser.add_argument('--n_tasks', default=20, type=int, help='n_tasks')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
