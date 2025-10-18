@@ -16,7 +16,7 @@ from graph_cbm.modeling.detection.detector import build_detector
 
 
 def create_model(num_classes):
-    backbone_name = 'swin_transformer'
+    backbone_name = 'resnet50'
     weights_path = f"save_weights/detector/{backbone_name}-fpn-model-best.pth"
     model = build_detector(backbone_name, num_classes, weights_path, is_train=False)
     return model
@@ -31,6 +31,13 @@ class CubDataset(Dataset):
 
         self.data = []
         for i, folder in enumerate(folder_list):
+            if folder in ['001.Black_footed_Albatross', '002.Laysan_Albatross', '003.Sooty_Albatross',
+                          '004.Groove_billed_Ani', '005.Crested_Auklet', '006.Least_Auklet',
+                          '007.Parakeet_Auklet', '008.Rhinoceros_Auklet', '009.Brewer_Blackbird',
+                          '010.Red_winged_Blackbird', '011.Rusty_Blackbird', '012.Yellow_headed_Blackbird',
+                          '013.Bobolink', '014.Indigo_Bunting', '015.Lazuli_Bunting', '016.Painted_Bunting',
+                          '017.Cardinal', '018.Spotted_Catbird', '019.Gray_Catbird', '020.Yellow_breasted_Chat']:
+                continue
             folder_path = join(self.root, folder)
             classfile_list = [cf for cf in os.listdir(folder_path)
                               if (os.path.isfile(os.path.join(folder_path, cf)) and cf[0] != '.')
@@ -54,7 +61,7 @@ class CubDataset(Dataset):
         return tuple(zip(*batch))
 
 
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+device = torch.device('cuda:3') if torch.cuda.is_available() else torch.device('cpu')
 model = create_model(num_classes=25)
 model = model.to(device)
 
@@ -233,9 +240,9 @@ def save_json():
     for i, key in enumerate(json_data.keys()):
         COCO_LABELS.append(key)
     COCO_LABELS.insert(0, 'background')
-    folder_path = "/home/txw/pycharm_project/efficient_cbm/data/CUB_200_2011/images"
+    folder_path = "/home/txw/pycharm_project/graph_cbm/data/CUB_200_2011/images"
     save_images_json(folder_path, COCO_LABELS)
 
 
 if __name__ == "__main__":
-    show_img()
+    save_json()

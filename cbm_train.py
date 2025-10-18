@@ -13,10 +13,8 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 def create_model(num_classes, relation_classes, n_tasks, args):
     target_name = args.backbone
     weights_path = ""
-    model = build_model(target_name, num_classes, relation_classes, n_tasks, weights_path)
+    model = build_model(target_name, num_classes, relation_classes, n_tasks, weights_path, 0.1)
     return model
-
-
 
 
 def main(args):
@@ -144,7 +142,7 @@ if __name__ == "__main__":
     parser.add_argument('--data-path', default='data', help='dataset')
     parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=18, type=int, help='relation_classes')
+    parser.add_argument('--relation-classes', default=19, type=int, help='relation_classes')
     parser.add_argument('--n_tasks', default=20, type=int, help='n_tasks')
     parser.add_argument('--output-dir', default='save_weights', help='path where to save')
     parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')

@@ -56,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda:1', help='device')
     parser.add_argument('--backbone', default='resnet50', help='backbone')
     parser.add_argument('--num-classes', default=24, type=int, help='num_classes')
-    parser.add_argument('--relation-classes', default=40, type=int, help='relation_classes')
+    parser.add_argument('--relation-classes', default=19, type=int, help='relation_classes')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--epochs', default=1, type=int, metavar='N', help='number of total epochs to run')
     parser.add_argument('--lr', default=0.01, type=float,

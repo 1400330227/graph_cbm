@@ -5,7 +5,7 @@ import torch
 from graph_cbm.modeling.detection.backbone import build_resnet50_backbone
 from graph_cbm.modeling.detection.detector import build_detector
 from graph_cbm.modeling.scene_graph import SceneGraph
-from graph_cbm.modeling.relation.predictor import Predictor
+from graph_cbm.modeling.relation.relation_predictor import RelationPredictor
 
 
 def create_model(num_classes, relation_classes):
@@ -13,7 +13,7 @@ def create_model(num_classes, relation_classes):
     weights_path = "../save_weights/detector/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth"
     detector = build_detector(backbone, num_classes, weights_path, use_relation=True)
 
-    predictor = Predictor(
+    predictor = RelationPredictor(
         obj_classes=num_classes,
         relation_classes=relation_classes,
     )

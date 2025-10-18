@@ -1,94 +1,24 @@
-# 文件: relationships_inference.py
+import json
+import os
+from os.path import isdir, join, isfile
 
 import torch
-import torchvision.transforms as T
-from PIL import Image, ImageDraw, ImageFont
-import numpy as np
 import random
 import argparse
-
-from matplotlib import pyplot as plt
-
-# 导入您项目中的相关模块
-# 请确保这些路径是正确的
+import torchvision.transforms as T
+from PIL import Image, ImageDraw, ImageFont
+from pathlib import Path
 from graph_cbm.modeling.scene_graph import build_scene_graph
 
-CUB_CLASSES = [
-    "background",
-    "back",
-    "beak",
-    "belly",
-    "breast",
-    "crown",
-    "forehead",
-    "left eye",
-    "left leg",
-    "left wing",
-    "nape",
-    "right eye",
-    "right leg",
-    "right wing",
-    "tail",
-    "throat",
-    "seawater",
-    "nostril",
-    "sky",
-    "snow",
-    "grass",
-    "tree",
-    "stone",
-    "beach",
-    "foreground",
-]
+with open("data/CUB_200_2011/attributes.json", "r") as f:
+    attributes_json_data = json.load(f)
 
-CUB_RELATIONS = [
-    "__background__",
-    "above",
-    "against",
-    "along",
-    "and",
-    "at",
-    "attached to",
-    "behind",
-    "belonging to",
-    "covering",
-    "flying in",
-    "for",
-    "from",
-    "has",
-    "in",
-    "in front of",
-    "laying on",
-    "looking at",
-    "lying on",
-    "near",
-    "of",
-    "on",
-    "on back of",
-    "over",
-    "parked on",
-    "part of",
-    "playing",
-    "riding",
-    "sitting on",
-    "standing on",
-    "to",
-    "under",
-    "using",
-    "walking in",
-    "walking on",
-    "watching",
-    "wearing",
-    "wears",
-    "with",
-    "on the left of",
-    "on the right of",
-    "on the side of",
-    "below",
-]
+with open("data/CUB_200_2011/relations.json", "r") as f:
+    relations_json_data = json.load(f)
 
+CUB_CLASSES = ['background'] + list(attributes_json_data.keys())
+CUB_RELATIONS = ['background'] + list(relations_json_data.keys())
 
-# --- 可视化辅助函数 ---
 
 def get_random_color():
     return (random.randint(50, 255), random.randint(50, 255), random.randint(50, 255))
@@ -129,7 +59,7 @@ def draw_relationships_on_image(image, boxes, rel_pairs, rel_labels, obj_colors,
             rel_text_bbox[2] + padding,
             rel_text_bbox[3] + padding
         )
-        draw.rectangle(padded_bbox, fill="white", outline="black", width=1)  # outline="black" 可以增加一个黑色边框
+        draw.rectangle(padded_bbox, fill="white", outline="black", width=1)
         draw.text(mid_point, rel_text, fill="black", font=font_large)
     return image
 
@@ -199,13 +129,65 @@ def draw_graph_on_blank_canvas(
     return canvas
 
 
-def main(args):
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+def save_graph_to_json(boxes, labels, rel_pairs, rel_labels, score_threshold=0.3, output_path="graph_output.json"):
+    """
+    将场景图保存为JSON格式
+    """
+    rel_scores, rel_pred_ids = rel_labels[:, 1:].max(dim=-1)
+    rel_pred_ids += 1
 
+    # 构建rel_pairs列表（文本格式）
+    rel_pairs_text = []
+    # 构建relationships列表（索引格式）
+    relationships = []
+    # 构建predicates列表（关系ID）
+    predicates = []
+
+    for i in range(len(rel_pairs)):
+        score = rel_scores[i].item()
+        if score < score_threshold:
+            continue
+
+        subj_idx = rel_pairs[i, 0].item()
+        obj_idx = rel_pairs[i, 1].item()
+        subj_label_id = labels[subj_idx].item()
+        obj_label_id = labels[obj_idx].item()
+
+        subj_text = CUB_CLASSES[subj_label_id]
+        obj_text = CUB_CLASSES[obj_label_id]
+        rel_id = rel_pred_ids[i].item()
+        rel_text = CUB_RELATIONS[rel_id]
+
+        # 添加到rel_pairs（文本格式）
+        rel_pairs_text.append([subj_text, rel_text, obj_text])
+
+        # 添加到relationships（索引格式）
+        relationships.append([int(subj_idx), int(obj_idx)])
+
+        # 添加到predicates（关系ID）
+        predicates.append(int(rel_id))
+
+    # 构建最终的JSON数据结构
+    graph_data = {
+        "rel_pairs": rel_pairs_text,
+        "relationships": relationships,
+        "predicates": predicates
+    }
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 保存为JSON文件
+    with open(output_path, 'w') as f:
+        json.dump(graph_data, f, indent=2)
+
+    print(f"场景图已保存到: {output_path}")
+    return graph_data
+
+
+def build_model(args):
     num_obj_classes = len(CUB_CLASSES)
     num_rel_classes = len(CUB_RELATIONS)
-    num_task_classes = 20
-
     model = build_scene_graph(
         backbone_name=args.backbone,
         num_classes=num_obj_classes,
@@ -213,18 +195,21 @@ def main(args):
         detector_weights_path="",
         weights_path=args.model_path,
     )
-    model.to(device)
-    model.eval()
+    return model
 
-    image_path = args.image_path
+
+def process_single_image(image_path, model, device, args):
+    """
+    处理单张图片并生成场景图JSON
+    """
+    image_path = Path(image_path)
     try:
         raw_image = Image.open(image_path).convert("RGB")
-    except FileNotFoundError:
-        return
+    except Exception as e:
+        print(f"无法打开图片 {image_path}: {e}")
+        return None
 
-    transform = T.Compose([
-        T.ToTensor(),
-    ])
+    transform = T.Compose([T.ToTensor()])
     image_tensor = transform(raw_image).to(device)
 
     with torch.no_grad():
@@ -235,79 +220,126 @@ def main(args):
     obj_scores = pred['scores']
     keep_indices = obj_scores > args.obj_threshold
 
+    if not keep_indices.any():
+        print(f"在 {image_path} 中未检测到任何物体")
+        return None
+
     final_boxes = pred['boxes'][keep_indices]
     final_labels = pred['labels'][keep_indices]
     final_rel_pairs = pred['rel_pair_idxs']
     final_rel_labels_and_scores = pred['pred_rel_scores']
 
     keep_indices_map = torch.where(keep_indices)[0]
-
     idx_map = -torch.ones(len(obj_scores), dtype=torch.long, device=device)
     idx_map[keep_indices_map] = torch.arange(len(keep_indices_map), device=device)
 
     subj_mapped = idx_map[final_rel_pairs[:, 0]]
     obj_mapped = idx_map[final_rel_pairs[:, 1]]
-
     keep_rel = (subj_mapped != -1) & (obj_mapped != -1)
+
+    if not keep_rel.any():
+        print(f"在 {image_path} 中未检测到任何有效关系")
+        return None
 
     filtered_rel_pairs = torch.stack((subj_mapped[keep_rel], obj_mapped[keep_rel]), dim=1)
     filtered_rel_scores = final_rel_labels_and_scores[keep_rel]
 
-    if 'scene_prob' in pred:
-        scene_probs = pred['scene_prob']
-        top_prob, top_class_id = torch.max(scene_probs, dim=0)
-        top_class_name = CUB_CLASSES[top_class_id.item() + 1]
-
-    detection_image, obj_colors = draw_object_detection_only(
-        raw_image.copy(),
-        final_boxes.cpu(),
-        final_labels.cpu()
-    )
-
-    scene_graph_image_on_real = draw_relationships_on_image(
-        detection_image.copy(),
-        final_boxes.cpu(),
-        filtered_rel_pairs.cpu(),
-        filtered_rel_scores.cpu(),
-        obj_colors,
-        score_threshold=args.rel_threshold
-    )
-
-    pure_graph_image = draw_graph_on_blank_canvas(
-        image_size=raw_image.size,
+    # 生成JSON文件
+    json_output_path = Path(str(image_path).replace("images", "relations")).with_suffix(".json")
+    graph_data = save_graph_to_json(
         boxes=final_boxes.cpu(),
         labels=final_labels.cpu(),
         rel_pairs=filtered_rel_pairs.cpu(),
         rel_labels=filtered_rel_scores.cpu(),
-        score_threshold=args.rel_threshold
+        score_threshold=args.rel_threshold,
+        output_path=str(json_output_path)
     )
 
-    scene_graph_image_on_real.save(args.output_path)
-    pure_graph_image.save("pure_" + args.output_path)
-    fig, axes = plt.subplots(1, 3, figsize=(30, 10))  # 创建一个1行3列的画布
-    axes[0].imshow(detection_image)
-    axes[0].set_title('Original Image', fontsize=20)
-    axes[0].axis('off')
-    axes[1].imshow(scene_graph_image_on_real)
-    axes[1].set_title('Scene Graph on Image', fontsize=20)
-    axes[1].axis('off')
-    axes[2].imshow(pure_graph_image)
-    axes[2].set_title('Pure Graph Structure', fontsize=20)
-    axes[2].axis('off')
-    plt.tight_layout()
-    plt.show()
+    return graph_data
+
+
+def batch_process_images(args):
+    """
+    批量处理images文件夹中的所有图片
+    """
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    model = build_model(args)
+    model.to(device)
+    model.eval()
+
+    # 构建images文件夹路径
+    images_path = Path(args.images_dir)
+    if not images_path.exists():
+        print(f"错误: 找不到images文件夹: {images_path}")
+        return
+
+    # 统计信息
+    stats = {
+        'total_processed': 0,
+        'successful': 0,
+        'failed': 0,
+        'no_objects': 0,
+        'no_relations': 0
+    }
+
+    print(f"开始处理文件夹: {images_path}")
+    print(f"设备: {device}")
+    print(f"物体阈值: {args.obj_threshold}, 关系阈值: {args.rel_threshold}")
+    print("-" * 50)
+
+    folder_list = [f for f in os.listdir(images_path) if isdir(join(images_path, f))]
+    folder_list.sort()
+    folder_list = folder_list[20:]
+    for i, folder in enumerate(folder_list):
+        folder_path = join(images_path, folder)
+        classfile_list = [cf for cf in os.listdir(folder_path)
+                          if (isfile(join(folder_path, cf)) and cf[0] != '.')
+                          and cf.lower().endswith('.jpg')]
+
+        for cf in classfile_list:
+            image_path = join(images_path, folder, cf)
+            stats['total_processed'] += 1
+            try:
+                result = process_single_image(image_path, model, device, args)
+                if result is None:
+                    stats['failed'] += 1
+                    # 检查具体失败原因
+                    if stats['failed'] == stats['no_objects'] + stats['no_relations']:
+                        # 如果失败数等于已知原因的总和，说明是新类型的失败
+                        print(f"  处理失败")
+                    else:
+                        print(f"  处理失败")
+                else:
+                    stats['successful'] += 1
+                    print(f"  成功生成JSON")
+
+            except Exception as e:
+                stats['failed'] += 1
+                print(f"  处理异常: {e}")
+
+    # 打印统计信息
+    print("\n" + "=" * 50)
+    print("处理完成统计:")
+    print(f"总处理图片数: {stats['total_processed']}")
+    print(f"成功生成JSON: {stats['successful']}")
+    print(f"失败数: {stats['failed']}")
+    if stats['no_objects'] > 0:
+        print(f"  - 无检测物体: {stats['no_objects']}")
+    if stats['no_relations'] > 0:
+        print(f"  - 无检测关系: {stats['no_relations']}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GraphCBM Scene Graph Inference and Visualization")
-    parser.add_argument("--image_path", type=str, required=True, help="待推理的单张图片路径。")
+    parser.add_argument("--image_path", type=str, required=False, help="待推理的单张图片路径。")
+    parser.add_argument("--images_dir", type=str, required=False, help="数据集images文件夹路径")
     parser.add_argument("--model_path", type=str, required=True, help="训练好的模型权重文件 (.pth) 的路径。")
     parser.add_argument("--backbone", type=str, default="resnet50", help="模型使用的骨干网络，必须与训练时一致。")
     parser.add_argument("--output_path", type=str, default="inference_result.jpg", help="可视化结果的保存路径。")
-    parser.add_argument("--device", type=str, default="cuda:0", help="运行推理的设备，例如 'cuda:0' 或 'cpu'。")
+    parser.add_argument("--device", type=str, default="cuda:3", help="运行推理的设备，例如 'cuda:0' 或 'cpu'。")
     parser.add_argument("--obj_threshold", type=float, default=0.5, help="只显示分数高于此阈值的物体。")
-    parser.add_argument("--rel_threshold", type=float, default=0.01, help="只显示分数高于此阈值的关系。")
+    parser.add_argument("--rel_threshold", type=float, default=0.1, help="只显示分数高于此阈值的关系。")
 
     args = parser.parse_args()
 
-    main(args)
+    batch_process_images(args)
