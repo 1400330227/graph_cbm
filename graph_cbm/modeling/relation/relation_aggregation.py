@@ -7,8 +7,10 @@ from torch import Tensor
 from torch.nn import Parameter
 from torch_geometric.utils import remove_self_loops, add_self_loops, softmax, scatter
 from torch_geometric.nn.inits import glorot, zeros
+from torch_scatter import scatter_add, scatter_softmax, scatter_mean
 
-class Aggregate(nn.Module):
+
+class RelationAggregation(nn.Module):
     _alpha: OptTensor
 
     def __init__(self, in_channels: Union[int, Tuple[int, int]],
@@ -17,7 +19,7 @@ class Aggregate(nn.Module):
                  add_self_loops: bool = True, edge_dim: Optional[int] = None,
                  fill_value: Union[float, Tensor, str] = 'mean',
                  bias: bool = True, share_weights: bool = False, **kwargs):
-        super(Aggregate, self).__init__()
+        super(RelationAggregation, self).__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -86,8 +88,8 @@ class Aggregate(nn.Module):
 
         source_nodes, target_nodes = edge_index[0], edge_index[1]
 
-        x_i = x_l[target_nodes]  # 目标节点特征 [num_edges, H, C]
-        x_j = x_r[source_nodes]  # 源节点特征   [num_edges, H, C]
+        x_i = x_l[target_nodes]
+        x_j = x_r[source_nodes]
 
         attention_input = x_i + x_j
 
@@ -120,17 +122,47 @@ class Aggregate(nn.Module):
             return out
 
 
-class RelationAggregation(nn.Module):
+class ObjectAggregation(nn.Module):
+    def __init__(self, representation_dim: int):
+        super(ObjectAggregation, self).__init__()
+        self.att = Parameter(torch.Tensor(1, representation_dim))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        glorot(self.att)
+
+    def forward(self, x_aggregation, num_objs):
+        batch_size = len(num_objs)
+        batch_idx = torch.repeat_interleave(
+            torch.arange(batch_size, device=x_aggregation.device),
+            torch.tensor(num_objs, device=x_aggregation.device)
+        )
+        scene_context_features = scatter_mean(x_aggregation, batch_idx, dim=0)
+
+        attention_input = x_aggregation + scene_context_features[batch_idx]
+        attention_input = F.leaky_relu(attention_input, negative_slope=0.2)
+        attn_logits = (attention_input * self.att).sum(dim=-1)
+        d_k = torch.tensor(x_aggregation.shape[-1], dtype=torch.float32, device=x_aggregation.device)
+        attn_logits = attn_logits / torch.sqrt(d_k)
+        attn_weights = scatter_softmax(attn_logits, batch_idx, dim=0)
+
+        weighted_features = x_aggregation * attn_weights.unsqueeze(-1)
+        scene_features_batch = scatter_add(weighted_features, batch_idx, dim=0)
+
+        return scene_features_batch, attn_weights
+
+
+class Aggregation(nn.Module):
     def __init__(self, node_feature_dim: int, num_relations: int, num_layers: int = 2,
                  dropout_prob: float = 0.3, heads: int = 4, relation_embedding_dim: int = 64):
-        super(RelationAggregation, self).__init__()
+        super(Aggregation, self).__init__()
         self.relation_embedding = nn.Embedding(num_relations, relation_embedding_dim)
-        self.layers = nn.ModuleList()
+        self.relation_aggregators = nn.ModuleList()
         hidden_channels = node_feature_dim // heads
 
         for index in range(num_layers):
-            self.layers.append(
-                Aggregate(
+            self.relation_aggregators.append(
+                RelationAggregation(
                     in_channels=node_feature_dim,
                     out_channels=hidden_channels,
                     heads=heads,
@@ -142,6 +174,7 @@ class RelationAggregation(nn.Module):
 
         self.activation = nn.ELU()
         self.dropout = nn.Dropout(p=dropout_prob)
+        self.object_aggregator = ObjectAggregation(node_feature_dim)
 
     def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list):
         if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
@@ -163,7 +196,7 @@ class RelationAggregation(nn.Module):
         edges_attention_batch = []
         edges_index = None
         edges_attention = None
-        for i, layer in enumerate(self.layers):
+        for i, layer in enumerate(self.relation_aggregators):
             x_update, attentions = layer(x, edge_index_batch, edge_attr=edge_attr, return_attention_weights=True)
             x = x + self.dropout(self.activation(x_update))
 
@@ -175,4 +208,7 @@ class RelationAggregation(nn.Module):
             edges_attention_batch.append(edges_attention)
 
         edges_attention_batch = torch.stack(edges_attention_batch, dim=0)
-        return x, (edges_index, edges_attention, edges_attention_batch)
+        relation_attentions = (edges_index, edges_attention, edges_attention_batch)
+        scene_features_batch, object_attentions = self.object_aggregator(x, num_nodes_list)
+
+        return scene_features_batch, x, (object_attentions, relation_attentions)

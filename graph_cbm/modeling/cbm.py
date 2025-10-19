@@ -2,12 +2,13 @@ import torch
 import torch.nn.functional as F
 from typing import List, Optional
 from torch import nn, Tensor
+from torch.nn import Parameter
 from torchvision.ops import MultiScaleRoIAlign
 from graph_cbm.modeling.detection.transform import resize_boxes
-from graph_cbm.modeling.relation.relation_aggregation import RelationAggregation
+from graph_cbm.modeling.relation.relation_aggregation import Aggregation
 from graph_cbm.modeling.scene_graph import SceneGraph, build_scene_graph
 from graph_cbm.modeling.target_model import get_target_model
-from torch_scatter import scatter_add, scatter_softmax
+from torch_scatter import scatter_add, scatter_softmax, scatter_mean
 
 
 def task_loss(y_logits, y, n_tasks, task_class_weights=None):
@@ -75,13 +76,14 @@ class CBMModel(nn.Module):
         self.representation_dim = representation_dim
         self.roi_align = roi_pooling
 
-        self.attention_layer = nn.Sequential(
-            nn.Linear(representation_dim, representation_dim),
-            nn.ReLU(),
-            nn.Linear(representation_dim, 1)
-        )
+        # self.attention_layer = nn.Sequential(
+        #     nn.Linear(representation_dim, representation_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(representation_dim, 1)
+        # )
+        self.att = Parameter(torch.Tensor(1, representation_dim))
         self.proj_layer = nn.Conv2d(out_channels, representation_dim, 1)
-        self.relation_aggregation = RelationAggregation(representation_dim, self.num_relations)
+        self.aggregation = Aggregation(representation_dim, self.num_relations)
         self.pool_layer = SoftmaxPooling2D(kernel_size=kernel_size)
         self.classifier = nn.Linear(representation_dim, n_tasks)
 
@@ -97,49 +99,11 @@ class CBMModel(nn.Module):
         images_tensor = torch.stack(images_list, dim=0)
         return images_tensor, targets_list
 
-    # def filter_graphs_by_labels(self, rel_graphs: list, labels_to_filter: Optional[List[int]] = None) -> list:
-    #     if not labels_to_filter:
-    #         return rel_graphs
-    #     filtered_graphs = []
-    #     device = rel_graphs[0]['labels'].device
-    #     filter_tensor = torch.tensor(labels_to_filter, device=device)
-    #     for graph in rel_graphs:
-    #         new_graph = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in graph.items()}
-    #         isin_mask = torch.isin(new_graph['labels'], filter_tensor)
-    #         keep_mask = ~isin_mask
-    #         keep_indices = torch.where(keep_mask)[0]
-    #         if len(keep_indices) == 0:
-    #             for key in ['boxes', 'labels', 'scores', 'rel_pair_idxs', 'pred_rel_labels']:
-    #                 num = (0,) + new_graph[key].shape[1:]
-    #                 new_graph[key] = torch.empty(num, device=new_graph[key].device, dtype=new_graph[key].dtype)
-    #             filtered_graphs.append(new_graph)
-    #             continue
-    #         new_graph['boxes'] = new_graph['boxes'][keep_indices]
-    #         new_graph['labels'] = new_graph['labels'][keep_indices]
-    #         new_graph['scores'] = new_graph['scores'][keep_indices]
-    #         if 'rel_pair_idxs' in new_graph and new_graph['rel_pair_idxs'].numel() > 0:
-    #             rel_pairs = new_graph['rel_pair_idxs']
-    #             remap_indices = torch.full((graph['labels'].size(0),), -1,
-    #                                        dtype=torch.long, device=keep_indices.device)
-    #             remap_indices[keep_indices] = torch.arange(len(keep_indices), device=keep_indices.device)
-    #             source_nodes, target_nodes = rel_pairs[:, 0], rel_pairs[:, 1]
-    #             mask_source_keep = (remap_indices[source_nodes] != -1)
-    #             mask_target_keep = (remap_indices[target_nodes] != -1)
-    #             edge_keep_mask = mask_source_keep & mask_target_keep
-    #             filtered_rel_pairs = rel_pairs[edge_keep_mask]
-    #             new_graph['pred_rel_labels'] = new_graph['pred_rel_labels'][edge_keep_mask]
-    #             if filtered_rel_pairs.numel() > 0:
-    #                 new_graph['rel_pair_idxs'] = remap_indices[filtered_rel_pairs]
-    #             else:
-    #                 new_graph['rel_pair_idxs'] = torch.empty((0, 2), device=rel_pairs.device, dtype=rel_pairs.dtype)
-    #         filtered_graphs.append(new_graph)
-    #     return filtered_graphs
 
     def forward(self, images: List[Tensor], targets: Optional[list[dict[str, Tensor]]] = None, weights=None):
         original_image_sizes = [(image.shape[-2], image.shape[-1]) for image in images]
         with torch.no_grad():
             rel_graphs, _ = self.graph(images, targets)
-        # rel_graphs = self.filter_graphs_by_labels(rel_graphs, [24])
         x, rel_graphs = self.preprocess(images, rel_graphs)
         image_sizes = [(x.shape[-2], x.shape[-1])] * x.shape[0]
         boxes = [rel['boxes'] for rel in rel_graphs]
@@ -154,20 +118,24 @@ class CBMModel(nn.Module):
         edge_type_list = [rel['pred_rel_labels'] for rel in rel_graphs]
         num_rels = [e.shape[1] for e in edge_index_list]
         num_objs = [rel['boxes'].shape[0] for rel in rel_graphs]
-
         x = torch.squeeze(self.pool_layer(x))
-        x_aggregation, relation_attentions = self.relation_aggregation(x, edge_index_list, edge_type_list, num_objs)  # [N_total_objs,256]
-
-        batch_size = len(num_objs)
-        batch_idx = torch.repeat_interleave(
-            torch.arange(batch_size, device=x_aggregation.device),
-            torch.tensor(num_objs, device=x_aggregation.device)
-        )
-        attn_logits = self.attention_layer(x_aggregation)  # [N_total_objs, 1]
-        attn_weights = scatter_softmax(attn_logits, batch_idx, dim=0)  # [N_total_objs, 1]
-        weighted_features = x_aggregation * attn_weights  # [N_total_objs,256]
-        scene_features_batch = scatter_add(weighted_features, batch_idx, dim=0)  # [N_total_objs,256]->[N,256]
-
+        # x_aggregation, relation_attentions = self.aggregation(x, edge_index_list, edge_type_list, num_objs)  # [N_total_objs,256]
+        # batch_size = len(num_objs)
+        # batch_idx = torch.repeat_interleave(
+        #     torch.arange(batch_size, device=x_aggregation.device),
+        #     torch.tensor(num_objs, device=x_aggregation.device)
+        # )
+        # scene_context_features = scatter_mean(x_aggregation, batch_idx, dim=0)
+        # attention_input = x_aggregation + scene_context_features[batch_idx]
+        # attention_input = F.leaky_relu(attention_input, negative_slope=0.2)
+        # attn_logits = (attention_input * self.att).sum(dim=-1)  # [N_total_objs, 1]
+        # d_k = torch.tensor(x_aggregation.shape[-1], dtype=torch.float32)
+        # attn_logits = attn_logits / torch.sqrt(d_k)
+        # attn_weights = scatter_softmax(attn_logits, batch_idx, dim=0)  # [N_total_objs, 1]
+        # weighted_features = x_aggregation * attn_weights.unsqueeze(-1)  # [N_total_objs,256]
+        # scene_features_batch = scatter_add(weighted_features, batch_idx, dim=0)  # [N_total_objs,256]->[N,256]
+        scene_features_batch, x_aggregation, attentions = self.aggregation(x, edge_index_list, edge_type_list, num_objs)
+        object_attentions, relation_attentions = attentions
         y_logits = self.classifier(scene_features_batch)  # [N,20]
 
         loss = {}
@@ -177,15 +145,15 @@ class CBMModel(nn.Module):
             loss['loss_task'] = loss_task
             return loss
 
-        result = self.post_processor(y_logits, rel_graphs, attn_weights, relation_attentions, image_sizes,
+        result = self.post_processor(y_logits, rel_graphs, object_attentions, relation_attentions, image_sizes,
                                      original_image_sizes, num_objs, num_rels, proj_maps, x_aggregation)
         return result
 
-    def post_processor(self, y_logits, relation_graphs, attn_weights, gat_attention_info, image_sizes,
+    def post_processor(self, y_logits, relation_graphs, object_attentions, gat_attention_info, image_sizes,
                        original_image_sizes, num_objs, num_rels, proj_maps, x_aggregation):
         relation_attentions = gat_attention_info[1].split(num_rels, dim=0)
         proj_maps = proj_maps.split(num_objs, dim=0)
-        object_attentions = attn_weights.split(num_objs, dim=0)
+        object_attentions = object_attentions.split(num_objs, dim=0)
         x_aggregation = x_aggregation.split(num_objs, dim=0)
         result = []
         for i, graph in enumerate(relation_graphs):
