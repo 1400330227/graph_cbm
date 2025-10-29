@@ -6,6 +6,7 @@ import matplotlib.colors as mcolors
 import torch
 import shap
 import pandas as pd
+import seaborn as sns
 from torch import Tensor, nn
 from torchvision import transforms
 from PIL import Image
@@ -329,6 +330,39 @@ def explain_with_waterfall(model: CBMModel, pil_image: Image,
     output_filename = "triplet_contribution_waterfall_final_fixed.jpg"
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     print(f"最终修复版三元组贡献瀑布图已保存到: {output_filename}")
+    plt.show()
+
+def visualize_attention_heatmap(attention_matrix, num_nodes):
+    """
+    Visualizes a dense attention matrix using seaborn.
+
+    Args:
+        attention_matrix (torch.Tensor): A [num_nodes, num_nodes] tensor.
+        num_nodes (int): The number of nodes (for labels).
+    """
+    # Move tensor to CPU and convert to NumPy for plotting
+    attention_matrix_np = attention_matrix.detach().cpu().numpy()
+
+    plt.figure(figsize=(10, 8))
+    ax = sns.heatmap(
+        attention_matrix_np,
+        annot=True,
+        fmt=".2f",
+        cmap="rocket",  # This colormap is similar to your example
+        linewidths=.5
+    )
+
+    # Configure labels
+    q_labels = [f'q{i}' for i in range(num_nodes)]
+    k_labels = [f'k{i}' for i in range(num_nodes)]
+    ax.set_xticklabels(k_labels, rotation=0, fontsize=12)
+    ax.set_yticklabels(q_labels, rotation=0, fontsize=12)
+
+    # Move column labels to the top
+    ax.xaxis.tick_top()
+    ax.xaxis.set_label_position('top')
+
+    plt.title("Relation Attention", fontsize=16, pad=20)
     plt.show()
 
 

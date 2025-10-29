@@ -13,7 +13,7 @@ from graph_cbm.utils.plot_curve import plot_loss_and_lr, plot_map
 def create_model(num_classes, relation_classes, n_tasks, args):
     target_name = args.backbone
     weights_path = ""
-    model = build_model(target_name, num_classes, relation_classes, n_tasks, weights_path, 0.1)
+    model = build_model(target_name, num_classes, relation_classes, n_tasks, weights_path)
     return model
 
 
@@ -80,7 +80,7 @@ def main(args):
     )
     best_acc = 0.
     if args.resume != "":
-        checkpoint = torch.load(args.resume, map_location='cpu')
+        checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         model.load_state_dict(checkpoint['model'], strict=False)
         optimizer.load_state_dict(checkpoint['optimizer'])
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])

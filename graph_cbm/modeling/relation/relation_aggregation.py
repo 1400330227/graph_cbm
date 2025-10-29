@@ -16,9 +16,9 @@ class RelationAggregation(nn.Module):
     def __init__(self, in_channels: Union[int, Tuple[int, int]],
                  out_channels: int, heads: int = 1, concat: bool = True,
                  negative_slope: float = 0.2, dropout: float = 0.0,
-                 add_self_loops: bool = True, edge_dim: Optional[int] = None,
+                 add_self_loops: bool = False, edge_dim: Optional[int] = None,
                  fill_value: Union[float, Tensor, str] = 'mean',
-                 bias: bool = True, share_weights: bool = False, **kwargs):
+                 bias: bool = False, share_weights: bool = False, **kwargs):
         super(RelationAggregation, self).__init__()
 
         self.in_channels = in_channels
@@ -93,6 +93,7 @@ class RelationAggregation(nn.Module):
 
         attention_input = x_i + x_j
 
+        edge_emb = torch.zeros_like(x_j)
         if self.lin_edge is not None and edge_attr is not None:
             edge_emb = self.lin_edge(edge_attr).view(-1, H, C)
             attention_input += edge_emb
@@ -105,7 +106,7 @@ class RelationAggregation(nn.Module):
             self._alpha = alpha.mean(dim=1)
 
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
-        weighted_messages = x_j * alpha.unsqueeze(-1)
+        weighted_messages = (x_j + edge_emb) * alpha.unsqueeze(-1)
         out = scatter(weighted_messages, target_nodes, dim=0, dim_size=num_nodes, reduce='sum')
 
         if self.concat:
@@ -142,14 +143,14 @@ class ObjectAggregation(nn.Module):
         attention_input = x_aggregation + scene_context_features[batch_idx]
         attention_input = F.leaky_relu(attention_input, negative_slope=0.2)
         attn_logits = (attention_input * self.att).sum(dim=-1)
-        d_k = torch.tensor(x_aggregation.shape[-1], dtype=torch.float32, device=x_aggregation.device)
-        attn_logits = attn_logits / torch.sqrt(d_k)
+        # d_k = torch.tensor(x_aggregation.shape[-1], dtype=torch.float32, device=x_aggregation.device)
+        # attn_logits = attn_logits / torch.sqrt(d_k)
         attn_weights = scatter_softmax(attn_logits, batch_idx, dim=0)
 
         weighted_features = x_aggregation * attn_weights.unsqueeze(-1)
-        scene_features_batch = scatter_add(weighted_features, batch_idx, dim=0)
+        scene_features = scatter_add(weighted_features, batch_idx, dim=0)
 
-        return scene_features_batch, attn_weights
+        return scene_features, attn_weights
 
 
 class Aggregation(nn.Module):
@@ -178,8 +179,9 @@ class Aggregation(nn.Module):
 
     def forward(self, node_features, edge_index_list, edge_type_list, num_nodes_list):
         if not edge_index_list or all(e.numel() == 0 for e in edge_index_list):
-            return node_features
-
+            x = node_features
+            scene_features, object_attentions = self.object_aggregator(x, num_nodes_list)
+            return scene_features, x, (object_attentions, None, None)
         offset = 0
         edge_index_batch = []
         edge_type_batch = []
@@ -187,28 +189,21 @@ class Aggregation(nn.Module):
             edge_index_batch.append(edge_index + offset)
             edge_type_batch.append(edge_type_list[i])
             offset += num_nodes_list[i]
-
         edge_index_batch = torch.cat(edge_index_batch, dim=1).contiguous()
         edge_type_batch = torch.cat(edge_type_batch, dim=0).contiguous()
         edge_attr = self.relation_embedding(edge_type_batch)
 
         x = node_features
-        edges_attention_batch = []
-        edges_index = None
-        edges_attention = None
+        relation_attentions = []
+        relation_indexes = []
         for i, layer in enumerate(self.relation_aggregators):
             x_update, attentions = layer(x, edge_index_batch, edge_attr=edge_attr, return_attention_weights=True)
             x = x + self.dropout(self.activation(x_update))
+            attention_index, attention_weight = attentions
+            relation_indexes = attention_index
+            relation_attentions.append(attention_weight)
+        relation_attentions = torch.stack(relation_attentions, dim=0)
+        relation_attentions = relation_attentions.mean(dim=0).squeeze()
+        scene_features, object_attentions = self.object_aggregator(x, num_nodes_list)
 
-            edge_index_with_self_loops, attention_weights_full = attentions
-            is_not_self_loop = edge_index_with_self_loops[0] != edge_index_with_self_loops[1]
-            edges_attention = attention_weights_full[is_not_self_loop]
-            edges_index = edge_index_with_self_loops[:, is_not_self_loop]
-
-            edges_attention_batch.append(edges_attention)
-
-        edges_attention_batch = torch.stack(edges_attention_batch, dim=0)
-        relation_attentions = (edges_index, edges_attention, edges_attention_batch)
-        scene_features_batch, object_attentions = self.object_aggregator(x, num_nodes_list)
-
-        return scene_features_batch, x, (object_attentions, relation_attentions)
+        return scene_features, x, (object_attentions, relation_attentions, relation_indexes)
