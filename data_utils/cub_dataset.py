@@ -106,7 +106,7 @@ class CubDataset(Dataset):
         target["area"] = area
         target["iscrowd"] = iscrowd
         target["relation"] = relations
-        self.set_relation_map(relationship_path, boxes, labels)
+        # self.set_relation_map(relationship_path, boxes, labels)
         target["relation_tuple"] = relation_tuple
         target["class_label"] = class_label
         if self.transforms is not None:
